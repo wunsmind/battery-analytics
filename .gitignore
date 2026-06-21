@@ -1,0 +1,16 @@
+# secrets
+.env
+
+# data — ignore all local/scratch dbs, but DO track the accumulated history db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+!prices.db
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
