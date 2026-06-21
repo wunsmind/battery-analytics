@@ -37,10 +37,14 @@ No Tibber account? Use the public demo token (already noted in `.env.example`).
 ## Usage
 
 ```bash
-python fetch.py     # pull today+tomorrow into prices.db (run daily)
+python fetch.py     # pull today+tomorrow (HOURLY + QUARTER_HOURLY) — run daily
 python backfill.py  # one-off: backfill recent history from Tibber (~31 days)
 python app.py       # dashboard at http://127.0.0.1:8050
 ```
+
+`fetch.py` captures **both** resolutions each run. Quarter-hourly is the native
+market unit (15-min since 2025-10-01) and Tibber only serves it for ~7 days, so
+fetching daily is what builds gap-free 15-min history going forward.
 
 ### Backfilling history
 

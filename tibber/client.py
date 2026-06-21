@@ -18,15 +18,17 @@ import requests
 API_URL = "https://api.tibber.com/v1-beta/gql"
 
 # Pulls every home on the account and both price windows in a single round-trip.
+# priceInfo's resolution arg uses the PriceInfoResolution enum (distinct from the
+# PriceInfoRangeResolution enum used by priceInfoRange).
 PRICE_QUERY = """
-{
+query Prices($resolution: PriceInfoResolution!) {
   viewer {
     homes {
       id
       appNickname
       address { address1 city }
       currentSubscription {
-        priceInfo {
+        priceInfo(resolution: $resolution) {
           today    { startsAt total energy tax level currency }
           tomorrow { startsAt total energy tax level currency }
         }
@@ -95,9 +97,13 @@ def _post(token: str, query: str, variables: dict | None = None, timeout: int = 
     return payload["data"]
 
 
-def fetch_prices(token: str) -> list[PriceHour]:
-    """Return all available hourly prices (today + tomorrow) across all homes."""
-    data = _post(token, PRICE_QUERY)
+def fetch_prices(token: str, resolution: str = "HOURLY") -> list[PriceHour]:
+    """Return available prices (today + tomorrow) across all homes.
+
+    resolution: "HOURLY" (24+24 intervals) or "QUARTER_HOURLY" (96+96).
+    """
+    resolution = resolution.upper()
+    data = _post(token, PRICE_QUERY, {"resolution": resolution})
     homes = data.get("viewer", {}).get("homes") or []
     out: list[PriceHour] = []
     for home in homes:
@@ -110,7 +116,7 @@ def fetch_prices(token: str) -> list[PriceHour]:
                     PriceHour(
                         home_id=home_id,
                         starts_at=h["startsAt"],
-                        resolution="HOURLY",  # priceInfo.today/tomorrow is hourly
+                        resolution=resolution,
                         total=h.get("total"),
                         energy=h.get("energy"),
                         tax=h.get("tax"),

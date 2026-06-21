@@ -31,15 +31,22 @@ def main() -> int:
         print("ERROR: set TIBBER_TOKEN in .env (copy from .env.example).", file=sys.stderr)
         return 1
 
-    try:
-        rows = fetch_prices(token)
-    except TibberError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 1
-
-    written = upsert_prices(db_path, rows)
+    # Capture both resolutions every run. Quarter-hourly is the native market unit
+    # (15-min since 2025-10-01) and Tibber only serves it for ~7 days, so it must be
+    # fetched regularly to build history without gaps.
+    total_written = 0
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    print(f"[{stamp}] fetched {len(rows)} hours, upserted {written} into {db_path}")
+    for resolution in ("HOURLY", "QUARTER_HOURLY"):
+        try:
+            rows = fetch_prices(token, resolution=resolution)
+        except TibberError as e:
+            print(f"ERROR ({resolution}): {e}", file=sys.stderr)
+            return 1
+        written = upsert_prices(db_path, rows)
+        total_written += written
+        print(f"[{stamp}] {resolution}: fetched {len(rows)}, upserted {written}")
+
+    print(f"[{stamp}] total upserted {total_written} into {db_path}")
     return 0
 
 
