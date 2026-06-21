@@ -89,7 +89,42 @@ The realism layer. Parameterized so any pack (CATL LFP today, anything later) is
 - ⬜ **Ancillary / balancing services** (FCR, aFRR, mFRR) — typically *higher
   value* than pure arbitrage; the real money for BESS
 - ⬜ **Revenue stacking**: co-optimize arbitrage + ancillary across one battery
-  (capacity allocation between markets)
+  (capacity allocation between markets) — value is migrating from saturated
+  FCR-D toward aFRR/mFRR/intraday, so multi-market is the point
+
+### Go-to-market wedge (decided — see research below)
+
+**Lead with software, not assets.** Asset-light optimization/trading SaaS beats
+building an aggregator VPP for a capital-light entrant, because:
+- Aggregation faces a regulatory wall: a Swedish BSP must *also* hold a BRP
+  agreement at every delivery point; full **independent-aggregator status only
+  arrives ~2028**. Selling software to existing BSP/BRP holders sidesteps it.
+- FCR-D is **saturated and price-collapsed** (~€5/MW by Jan 2025; BESS ~73% of
+  FCR-D-up vs sub-550 MW demand). A single-market aggregation bet rides a
+  collapsing market; multi-market software rides the growing one.
+- Incumbents exist in both, but barriers are lower in software.
+
+**Minimum first product:** the Tibber + ENTSO-E pipeline + Python optimizer,
+packaged as a **revenue-stacking dispatch/arbitrage API** for SE3/SE4 battery
+owners who lack in-house quant teams. Hybrid path: graduate *into* aggregation
+as independent-aggregator rules mature toward 2028.
+
+**Market-access build-vs-partner ladder** (climb it; don't start at the top):
+1. Pure software ("the brain") — sell optimization to a BSP/BRP/owner
+2. Sub-aggregator / route-to-market partner — deliver into an existing portfolio
+3. BSP-only, partner a BRP
+4. Full stack — become BRP + BSP (collateral, eSett, Ediel, 24/7 ops)
+
+**Known competitors:** Capalo AI (Zeus VPP — direct SaaS competitor: 300+ MW,
+50+ assets, 4 countries, €11M Series A Feb 2026); CheckWatt (aggregation: ~15k
+customers, ~100 MW, ~1/5 of Swedish FCR-D 2024). Differentiate on forecasting/
+optimization quality, segment focus (C&I / self-operating owners), or SE3/SE4 depth.
+
+**Open questions to resolve before committing capital:** verified unit economics
+(€/MW/yr, revenue-share %, SaaS pricing — none confirmed in research); per-service
+minimum-bid thresholds; how crowded the SE3/SE4 SaaS niche is beyond Capalo
+(Flower, Sympower, Entrix, gridX, Sourceful Energy, Capture); the most
+capital-efficient pre-2028 hybrid path.
 
 ## Phase 6 — Product, scale & aggregation ⬜
 
