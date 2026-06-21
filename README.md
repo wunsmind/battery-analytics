@@ -60,8 +60,10 @@ python backfill.py QUARTER_HOURLY  # ~7 days quarter-hourly
 
 For **deep history** (back to 2015, every Nordic/Baltic bidding zone) use
 ENTSO-E — see the roadmap. Note: the EU day-ahead market moved to **15-minute
-resolution on 1 Oct 2025**, so quarter-hourly is now the native market unit;
-this repo currently stores hourly (a `resolution` column is the planned upgrade).
+resolution on 1 Oct 2025**, so quarter-hourly is now the native market unit.
+The `prices` table carries a `resolution` column so HOURLY and QUARTER_HOURLY
+data coexist (PK is `(home_id, starts_at, resolution)`); the dashboard has a
+resolution selector.
 
 ## Scheduling (build history automatically)
 

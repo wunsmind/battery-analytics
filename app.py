@@ -18,7 +18,7 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, dcc, html
 from dotenv import load_dotenv
 
-from store.db import list_homes, load_prices
+from store.db import list_homes, list_resolutions, load_prices
 
 load_dotenv()
 DB_PATH = os.getenv("DB_PATH", "prices.db")
@@ -72,6 +72,10 @@ app.layout = html.Div(
                         style={"width": "260px"},
                     ),
                 ]),
+                html.Div([
+                    html.Label("Resolution"),
+                    dcc.Dropdown(id="resolution", clearable=False, style={"width": "200px"}),
+                ]),
             ],
         ),
         html.Div(id="kpis", style={"display": "flex", "gap": "24px", "margin": "20px 0"}),
@@ -97,6 +101,19 @@ def _populate_homes(_n, current):
     return options, value
 
 
+@app.callback(
+    Output("resolution", "options"),
+    Output("resolution", "value"),
+    Input("tick", "n_intervals"),
+    Input("resolution", "value"),
+)
+def _populate_resolutions(_n, current):
+    res = list_resolutions(DB_PATH) or ["HOURLY"]
+    options = [{"label": r.replace("_", "-").title(), "value": r} for r in res]
+    value = current if current in res else res[0]
+    return options, value
+
+
 def _kpi_card(label: str, value: str, color: str = "#111"):
     return html.Div(
         style={"padding": "12px 16px", "background": "#f5f5f7", "borderRadius": "10px",
@@ -114,10 +131,11 @@ def _kpi_card(label: str, value: str, color: str = "#111"):
     Output("kpis", "children"),
     Input("home", "value"),
     Input("metric", "value"),
+    Input("resolution", "value"),
     Input("tick", "n_intervals"),
 )
-def _update(home, metric, _n):
-    df = load_prices(DB_PATH, home_id=home)
+def _update(home, metric, resolution, _n):
+    df = load_prices(DB_PATH, home_id=home, resolution=resolution)
     empty = go.Figure().update_layout(
         annotations=[dict(text="No data yet — run: python fetch.py",
                           showarrow=False, font=dict(size=16))]
@@ -142,7 +160,7 @@ def _update(home, metric, _n):
 
     latest_day = stats.iloc[-1]
     kpis = [
-        _kpi_card("Hours stored", f"{len(df)}"),
+        _kpi_card("Intervals stored", f"{len(df)}"),
         _kpi_card("Days tracked", f"{stats.shape[0]}"),
         _kpi_card(f"Latest spread", f"{latest_day['spread']:.3f}", "#0a7d33"),
         _kpi_card("Latest max", f"{latest_day['max']:.3f}"),

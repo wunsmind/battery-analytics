@@ -64,6 +64,7 @@ RANGE_MAX = {"HOURLY": 744, "QUARTER_HOURLY": 672}
 class PriceHour:
     home_id: str
     starts_at: str  # ISO-8601 with timezone offset, e.g. 2026-06-21T00:00:00+02:00
+    resolution: str  # HOURLY | QUARTER_HOURLY
     total: float | None
     energy: float | None
     tax: float | None
@@ -109,6 +110,7 @@ def fetch_prices(token: str) -> list[PriceHour]:
                     PriceHour(
                         home_id=home_id,
                         starts_at=h["startsAt"],
+                        resolution="HOURLY",  # priceInfo.today/tomorrow is hourly
                         total=h.get("total"),
                         energy=h.get("energy"),
                         tax=h.get("tax"),
@@ -140,6 +142,7 @@ def fetch_price_range(token: str, resolution: str = "HOURLY", last: int | None =
                 PriceHour(
                     home_id=home_id,
                     starts_at=h["startsAt"],
+                    resolution=resolution,
                     total=h.get("total"),
                     energy=h.get("energy"),
                     tax=h.get("tax"),
