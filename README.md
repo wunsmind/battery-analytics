@@ -79,13 +79,13 @@ Tomorrow's prices publish ~13:00 CET. Fetch once daily after that. Add to `cront
 
 ## Roadmap (toward BESS / flexibility)
 
-This Python core is designed to grow into a battery-optimisation backend:
-1. **Ingestion** — add an ENTSO-E ingester (free API; day-ahead prices back to
-   2015 for all SE/NO/DK/FI/Baltic zones). Request API access by emailing
-   `transparency@entsoe.eu` ("Restful API access"); client lib: `entsoe-py`.
-   Then add balancing/imbalance market feeds.
-2. **Forecasting** — predict next-day prices (statsmodels / ML)
-3. **Optimisation** — battery dispatch via MILP (PuLP / Pyomo / cvxpy) to maximise
-   arbitrage + grid-service revenue
-4. **API + product UI** — expose results over an API; add a Next.js frontend for
-   customers when needed
+This Python core is designed to grow into a battery-optimisation and trading
+backend: **ingest → forecast → optimise dispatch → trade**, with a realistic
+battery model (degradation + round-trip efficiency + SoC) gating every decision.
+
+See **[ROADMAP.md](ROADMAP.md)** for the full phased plan, including the
+degradation-cost model and the (critical) SoC-estimation workstream.
+
+Immediate next step: the **ENTSO-E ingester** (deep history back to 2015, all
+Nordic/Baltic zones) — pending API access (email `transparency@entsoe.eu`,
+"Restful API access"; client lib `entsoe-py`).

@@ -1,0 +1,149 @@
+# Roadmap — battery-analytics → BESS optimization & trading
+
+From a spot-price tracker to a battery energy storage (BESS) optimization and
+flexibility-trading platform (think Flower / Capture Energy). The defensible core
+is the Python pipeline: **ingest → forecast → optimize dispatch → trade**, with a
+realistic **battery model** (degradation + efficiency + SoC) gating every decision.
+
+Status legend: ✅ done · 🚧 in progress · ⏳ blocked/waiting · ⬜ planned
+
+---
+
+## Guiding principles
+
+- **The battery model is the constraint, not an afterthought.** Dispatch is only
+  honest if every cycle is costed (degradation), every conversion is lossy
+  (round-trip efficiency), and available energy is *known* (SoC). Design the
+  optimizer with these hooks from day one.
+- **Data-licensing boundary** (see `data-licensing.md`): ENTSO-E/Tibber data is
+  for **internal** R&D/modelling only. Anything customer-facing or traded-on needs
+  a commercial license (Nord Pool or a vendor) — *derived signals count*. Keep a
+  hard architectural line between internal data and external product.
+- **Backtest before live.** Every strategy proves out on historical data (with
+  realistic costs) before touching a real asset or a real market.
+
+---
+
+## Phase 0 — Market-data foundation ✅ (mostly)
+
+- ✅ Tibber ingestion (today+tomorrow, HOURLY + QUARTER_HOURLY), idempotent SQLite
+- ✅ Tibber ~31-day backfill via `priceInfoRange`
+- ✅ Daily cloud cron (GitHub Actions) committing data back
+- ✅ Dual-resolution schema; Dash dashboard (price curve + daily arbitrage spread)
+- ⏳ **ENTSO-E ingester** — deep history (back to 2015), all SE/NO/DK/FI/Baltic
+  bidding zones. *Blocked on API token (requested).* `entsoe-py`.
+
+## Phase 1 — Price intelligence ⬜
+
+- ⬜ Migrate storage to **TimescaleDB/Postgres** when scale/queries demand it
+- ⬜ Exploratory analytics: spread distributions, volatility, seasonality,
+  intraday shape, zone-vs-zone differentials
+- ⬜ **Price forecasting** — day-ahead first, then intraday:
+  - Baselines (naive, seasonal) → statistical (SARIMAX, gradient boosting) → ML
+  - Output **probabilistic** forecasts (quantiles), not point estimates — the
+    optimizer needs uncertainty
+- ⬜ Forecast backtesting + accuracy tracking (pinball loss, MAE by horizon)
+
+## Phase 2 — Battery asset model & economics ⬜
+
+The realism layer. Parameterized so any pack (CATL LFP today, anything later) is config.
+
+- ⬜ **Battery config module**: usable capacity, SoC window, max C-rate (charge/
+  discharge), round-trip efficiency, cycle-life-vs-DoD curve, calendar curve,
+  warranty throughput/cycle limits. *Verify against real CATL datasheet.*
+- ⬜ **Round-trip efficiency** in the economic model (for LFP ~90–94%, this often
+  dominates the dispatch decision more than degradation)
+- ⬜ **Degradation cost model**, staged:
+  1. Throughput marginal cost (`€/kWh = pack_cost / lifetime_throughput`) — start here
+  2. Rainflow cycle counting + DoD curve (value irregular cycling)
+  3. Semi-empirical: `loss = f_cal(t,T,SoC) + f_cyc(throughput,DoD,C-rate,T)`
+- ⬜ **Warranty limits as optimizer constraints** (CATL warranties are throughput/
+  cycle-bound — staying inside them is a hard limit, not just a cost)
+- ⬜ **SoC estimation strategy** — see dedicated section below (critical)
+
+## Phase 3 — Dispatch optimization ⬜
+
+- ⬜ **MILP arbitrage optimizer** (PuLP/Pyomo/cvxpy or OR-Tools): maximize
+  `revenue − degradation − efficiency losses` s.t. SoC, power, warranty constraints
+- ⬜ Perfect-foresight backtest (upper bound on achievable P&L)
+- ⬜ **Rolling-horizon / MPC** dispatch driven by Phase-1 forecasts
+- ⬜ **Robust/stochastic** optimization for forecast *and* SoC uncertainty
+  (SoC buffers so commitments are deliverable even when the estimate is off)
+- ⬜ **Backtesting engine**: simulate strategies on history → P&L, cycles,
+  degradation, capacity trajectory
+
+## Phase 4 — Real-time operations & control ⬜
+
+- ⬜ Real-time data feeds (live prices, asset telemetry)
+- ⬜ **BMS / EMS / inverter integration** (Modbus TCP / SunSpec / REST): live SoC,
+  voltage, temperature, power; command interface
+- ⬜ **SoC fusion/validation layer** (see below)
+- ⬜ Closed-loop dispatch execution with safety constraints + fallback
+- ⬜ Monitoring, alerting, audit log of every dispatch decision
+
+## Phase 5 — Market participation (the revenue engine) ⬜
+
+- ⬜ **Commercial data + market access**: Nord Pool license (or vendor); BRP
+  (Balance Responsible Party) partnership or membership
+- ⬜ Day-ahead trading → **intraday continuous** trading
+- ⬜ **Ancillary / balancing services** (FCR, aFRR, mFRR) — typically *higher
+  value* than pure arbitrage; the real money for BESS
+- ⬜ **Revenue stacking**: co-optimize arbitrage + ancillary across one battery
+  (capacity allocation between markets)
+
+## Phase 6 — Product, scale & aggregation ⬜
+
+- ⬜ Multi-asset / multi-tenant platform
+- ⬜ **VPP aggregation**: pool many small batteries, bid as one virtual asset
+- ⬜ Customer-facing product (Next.js over the Python API): accounts, dashboards,
+  reporting, billing — enforcing the data-licensing boundary
+- ⬜ Compliance, SLAs, observability at fleet scale
+
+---
+
+## SoC estimation — critical workstream (Phase 2 → 4)
+
+**Why it gates everything:** dispatch and market commitments assume you know the
+available energy. A 5% SoC error means mis-sized bids → **under-delivery penalties**
+(severe in FCR/aFRR where delivery is mandatory) and bad arbitrage timing. SoC
+accuracy is a hard requirement for revenue, not a nicety.
+
+**Why LFP makes it *harder*:** LFP's **flat OCV–SoC curve** (~20–90% SoC) means
+voltage barely moves across most of the range, so voltage-based SoC is unreliable
+in the middle band; pure coulomb counting **drifts** over time; and LFP has notable
+**voltage hysteresis** (charge vs discharge OCV differ). This is the well-known LFP
+SoC problem.
+
+**Methods (state of the art):**
+- Coulomb counting (integrate current) — accurate short-term, drifts long-term
+- OCV correction at the curve's steep ends (near full/empty) to re-anchor
+- **Model-based filters: Extended/Unscented Kalman Filter (EKF/UKF)** over an
+  equivalent-circuit model — the industry standard; fuses current + voltage + model
+- Data-driven / ML estimators once fleet data exists
+- Periodic **full-cycle recalibration** to reset drift
+
+**Build vs consume — key decision (flag, don't block):**
+- **Software-only player** (most BESS optimizers, incl. Flower/Capture-style):
+  *consume* SoC from the pack's BMS/EMS over Modbus/REST, and build a **validation
+  + uncertainty + fusion layer** on top (sanity-check BMS SoC against your own
+  coulomb-count + energy throughput; carry an uncertainty band into the optimizer).
+- **Vertically integrated (own hardware/BMS):** SoC estimation becomes core IP
+  (EKF/UKF on raw cell telemetry). Much larger scope.
+- **Default recommendation:** consume BMS SoC + own a validation/uncertainty layer,
+  and make the optimizer **SoC-uncertainty-aware** (Phase 3 robust optimization).
+  Revisit owning estimation only if you go vertical.
+
+---
+
+## Cross-cutting
+
+- **Data licensing** — enforce internal-vs-external boundary (`data-licensing.md`)
+- **Infra/DevOps** — storage, scheduling, secrets, deployment, observability
+- **Regulatory** — market membership, BRP, metering/settlement compliance
+- **Validation discipline** — backtest with realistic costs before any live action
+
+---
+
+*Representative battery figures here are illustrative and must be verified against
+the actual CATL pack datasheet (cycle-life-vs-DoD, calendar curve, RTE, C-rate,
+warranty terms) before they enter the economic model.*
