@@ -37,6 +37,29 @@ PRICE_QUERY = """
 """
 
 
+# Historical/backfill prices via the connection field. Tibber caps the lookback:
+# ~744 nodes (≈31 days) for HOURLY, ~672 (≈7 days) for QUARTER_HOURLY — asking for
+# more silently returns the cap. Note: PriceInfo.range was removed; the live field
+# is Subscription.priceInfoRange(resolution, first/last, before/after).
+RANGE_QUERY = """
+query Range($resolution: PriceInfoRangeResolution!, $last: Int!) {
+  viewer {
+    homes {
+      id
+      currentSubscription {
+        priceInfoRange(resolution: $resolution, last: $last) {
+          nodes { startsAt total energy tax level currency }
+        }
+      }
+    }
+  }
+}
+"""
+
+# Documented practical caps (asking beyond these just returns the cap).
+RANGE_MAX = {"HOURLY": 744, "QUARTER_HOURLY": 672}
+
+
 @dataclass(frozen=True)
 class PriceHour:
     home_id: str
@@ -52,10 +75,10 @@ class TibberError(RuntimeError):
     pass
 
 
-def _post(token: str, query: str, timeout: int = 30) -> dict:
+def _post(token: str, query: str, variables: dict | None = None, timeout: int = 30) -> dict:
     resp = requests.post(
         API_URL,
-        json={"query": query},
+        json={"query": query, "variables": variables or {}},
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -93,4 +116,35 @@ def fetch_prices(token: str) -> list[PriceHour]:
                         currency=h.get("currency"),
                     )
                 )
+    return out
+
+
+def fetch_price_range(token: str, resolution: str = "HOURLY", last: int | None = None) -> list[PriceHour]:
+    """Backfill historical prices via priceInfoRange.
+
+    resolution: "HOURLY" or "QUARTER_HOURLY".
+    last: how many intervals back to request; defaults to the resolution's cap.
+    """
+    resolution = resolution.upper()
+    if resolution not in RANGE_MAX:
+        raise ValueError(f"resolution must be one of {list(RANGE_MAX)}")
+    last = last or RANGE_MAX[resolution]
+    data = _post(token, RANGE_QUERY, {"resolution": resolution, "last": last}, timeout=60)
+    homes = data.get("viewer", {}).get("homes") or []
+    out: list[PriceHour] = []
+    for home in homes:
+        home_id = home["id"]
+        rng = (home.get("currentSubscription") or {}).get("priceInfoRange") or {}
+        for h in rng.get("nodes") or []:
+            out.append(
+                PriceHour(
+                    home_id=home_id,
+                    starts_at=h["startsAt"],
+                    total=h.get("total"),
+                    energy=h.get("energy"),
+                    tax=h.get("tax"),
+                    level=h.get("level"),
+                    currency=h.get("currency"),
+                )
+            )
     return out

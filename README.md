@@ -37,9 +37,31 @@ No Tibber account? Use the public demo token (already noted in `.env.example`).
 ## Usage
 
 ```bash
-python fetch.py     # pull latest prices into prices.db (run daily)
+python fetch.py     # pull today+tomorrow into prices.db (run daily)
+python backfill.py  # one-off: backfill recent history from Tibber (~31 days)
 python app.py       # dashboard at http://127.0.0.1:8050
 ```
+
+### Backfilling history
+
+`fetch.py` only captures today + tomorrow, so history grows forward from your
+first run. `backfill.py` uses Tibber's `priceInfoRange` for an immediate head
+start, but Tibber caps the lookback:
+
+| Resolution | Max lookback |
+|------------|--------------|
+| `HOURLY` (default) | ~31 days (744 intervals) |
+| `QUARTER_HOURLY`   | ~7 days (672 intervals) |
+
+```bash
+python backfill.py                 # ~31 days hourly
+python backfill.py QUARTER_HOURLY  # ~7 days quarter-hourly
+```
+
+For **deep history** (back to 2015, every Nordic/Baltic bidding zone) use
+ENTSO-E — see the roadmap. Note: the EU day-ahead market moved to **15-minute
+resolution on 1 Oct 2025**, so quarter-hourly is now the native market unit;
+this repo currently stores hourly (a `resolution` column is the planned upgrade).
 
 ## Scheduling (build history automatically)
 
@@ -52,7 +74,10 @@ Tomorrow's prices publish ~13:00 CET. Fetch once daily after that. Add to `cront
 ## Roadmap (toward BESS / flexibility)
 
 This Python core is designed to grow into a battery-optimisation backend:
-1. **Ingestion** — add raw Nord Pool day-ahead + balancing/imbalance market feeds
+1. **Ingestion** — add an ENTSO-E ingester (free API; day-ahead prices back to
+   2015 for all SE/NO/DK/FI/Baltic zones). Request API access by emailing
+   `transparency@entsoe.eu` ("Restful API access"); client lib: `entsoe-py`.
+   Then add balancing/imbalance market feeds.
 2. **Forecasting** — predict next-day prices (statsmodels / ML)
 3. **Optimisation** — battery dispatch via MILP (PuLP / Pyomo / cvxpy) to maximise
    arbitrage + grid-service revenue
