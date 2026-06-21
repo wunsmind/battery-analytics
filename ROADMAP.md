@@ -120,11 +120,25 @@ as independent-aggregator rules mature toward 2028.
 customers, ~100 MW, ~1/5 of Swedish FCR-D 2024). Differentiate on forecasting/
 optimization quality, segment focus (C&I / self-operating owners), or SE3/SE4 depth.
 
-**Open questions to resolve before committing capital:** verified unit economics
-(€/MW/yr, revenue-share %, SaaS pricing — none confirmed in research); per-service
-minimum-bid thresholds; how crowded the SE3/SE4 SaaS niche is beyond Capalo
-(Flower, Sympower, Entrix, gridX, Sourceful Energy, Capture); the most
-capital-efficient pre-2028 hybrid path.
+**Verified unit economics (2024–25, SE3/SE4):**
+- Battery revenue **~€90–140k/MW/yr** (~€100k central, 1 MW/2 MWh) — *and falling*
+- Aggregator (CheckWatt) take: **20% performance fee** (10/10 split) + €5/system/mo
+  + Swedish BRP 5–10% admin → owner keeps **~70–80%**
+- Asset-light optimizer take: **~10% of trading profit** on 1–3 yr deals
+  → only **~€3–6k/MW/yr** per MW. **Thin → this is a scale game** (need hundreds
+  of MW under management). Tolling (~€110–150k/MW/yr fixed) is capital-heavy — *not us*.
+- Category is VC-fundable: Entrix €43M + GridBeyond €12M (2026), Capalo €11M.
+
+**Sharpest opening — aFRR early-mover:** SE has **0 MW prequalified battery aFRR**
+(Jan 2025; vs DK 5.3, FI 40). The aFRR energy-activation market opens only when
+SvK joins **PICASSO (~2026, date unconfirmed)**. FCR-D is saturated/collapsed;
+aFRR is the empty next product. **Build the optimizer to be first/best at SE aFRR
+bidding before it saturates like FCR-D did.**
+
+**Open questions before committing capital:** cost/team/time-to-revenue to build
+this (no data — partly internal); exact grid-scale SaaS pricing; confirmed PICASSO
+date; full competitive map beyond Capalo/Entrix/GridBeyond/CheckWatt (Flower,
+Sympower, Sourceful Energy, gridX, Enspired unverified).
 
 ## Phase 6 — Product, scale & aggregation ⬜
 
