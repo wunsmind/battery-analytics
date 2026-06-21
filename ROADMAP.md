@@ -48,13 +48,15 @@ Status legend: ✅ done · 🚧 in progress · ⏳ blocked/waiting · ⬜ planne
 
 The realism layer. Parameterized so any pack (CATL LFP today, anything later) is config.
 
-- ⬜ **Battery config module**: usable capacity, SoC window, max C-rate (charge/
+- 🚧 **Battery config module**: usable capacity, SoC window, max C-rate (charge/
   discharge), round-trip efficiency, cycle-life-vs-DoD curve, calendar curve,
   warranty throughput/cycle limits. *Verify against real CATL datasheet.*
-- ⬜ **Round-trip efficiency** in the economic model (for LFP ~90–94%, this often
-  dominates the dispatch decision more than degradation)
-- ⬜ **Degradation cost model**, staged:
-  1. Throughput marginal cost (`€/kWh = pack_cost / lifetime_throughput`) — start here
+  → scaffolded in `optimizer/assets.py` (`BatteryAsset`, illustrative CATL LFP).
+- 🚧 **Round-trip efficiency** in the economic model (for LFP ~90–94%, this often
+  dominates the dispatch decision more than degradation) → in `BatteryAsset`.
+- 🚧 **Degradation cost model**, staged:
+  1. Throughput marginal cost (`€/kWh = pack_cost / lifetime_throughput`) — ✅ done
+     (`optimizer/degradation.py`); rainflow/semi-empirical are stubs
   2. Rainflow cycle counting + DoD curve (value irregular cycling)
   3. Semi-empirical: `loss = f_cal(t,T,SoC) + f_cyc(throughput,DoD,C-rate,T)`
 - ⬜ **Warranty limits as optimizer constraints** (CATL warranties are throughput/
@@ -63,6 +65,9 @@ The realism layer. Parameterized so any pack (CATL LFP today, anything later) is
 
 ## Phase 3 — Dispatch optimization ⬜
 
+- 🚧 **Optimizer interface + naive baseline** scaffolded (`optimizer/dispatch.py`):
+  `DispatchOptimizer` contract, `RevenueBreakdown`, and a spot-only
+  `ThresholdArbitrageOptimizer` lower bound that runs on real `prices.db`.
 - ⬜ **MILP arbitrage optimizer** (PuLP/Pyomo/cvxpy or OR-Tools): maximize
   `revenue − degradation − efficiency losses` s.t. SoC, power, warranty constraints
 - ⬜ Perfect-foresight backtest (upper bound on achievable P&L)
