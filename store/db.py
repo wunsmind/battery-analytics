@@ -197,3 +197,11 @@ def list_zones(db_path: str) -> list[str]:
     with connect(db_path) as conn:
         rows = conn.execute("SELECT DISTINCT zone FROM zone_prices ORDER BY zone").fetchall()
     return [r[0] for r in rows]
+
+
+def list_zone_resolutions(db_path: str) -> list[str]:
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT resolution FROM zone_prices ORDER BY resolution"
+        ).fetchall()
+    return [r[0] for r in rows]

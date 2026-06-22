@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Plotly Dash dashboard for Tibber / Nord Pool spot prices.
+"""Plotly Dash dashboard for electricity spot prices.
 
     python app.py   ->   http://127.0.0.1:8050
 
-Reads from the SQLite DB populated by fetch.py. Shows the hourly price curve,
-and daily stats including the min/max spread — the daily arbitrage potential
-that a battery could capture (charge cheap, discharge expensive).
+EUR-first: defaults to ENTSO-E bidding-zone day-ahead prices (EUR/MWh, the
+wholesale market price). Tibber home prices (the local consumer price) are
+available as a secondary source. Shows the price curve and the daily min/max
+spread — the arbitrage potential a battery could capture.
 """
 
 from __future__ import annotations
@@ -18,30 +19,39 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, dcc, html
 from dotenv import load_dotenv
 
-from store.db import list_homes, list_resolutions, load_prices
+from store.db import (
+    list_homes,
+    list_resolutions,
+    list_zone_resolutions,
+    list_zones,
+    load_prices,
+    load_zone_prices,
+)
 
 load_dotenv()
 DB_PATH = os.getenv("DB_PATH", "prices.db")
 
-METRICS = {
-    "energy": "Spot / energy price",
-    "total": "Total price (energy + tax)",
+# Source-specific config: how to load, which column holds the price, and the unit.
+ZONE = "zone"
+TIBBER = "tibber"
+TIBBER_METRICS = {
+    "energy": "Spot / energy",
+    "total": "Total (energy + tax)",
     "tax": "Tax & fees",
 }
 
 app = Dash(__name__, title="Battery Analytics — Spot Prices")
 
 
-def _daily_stats(df: pd.DataFrame, metric: str) -> pd.DataFrame:
-    """Per-day min/max/mean/spread for the chosen metric, in local (account) time."""
+def _daily_stats(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """Per-day min/max/mean/spread for `col`, grouped by local calendar day."""
     if df.empty:
         return df
     local = df.copy()
-    # Tibber timestamps carry the home's tz offset; group by the local calendar day.
-    local["day"] = local["starts_at"].dt.tz_convert(local["starts_at"].dt.tz).dt.date \
-        if local["starts_at"].dt.tz is not None else local["starts_at"].dt.date
-    g = local.groupby("day")[metric]
-    stats = g.agg(["min", "max", "mean"]).reset_index()
+    tz = local["starts_at"].dt.tz
+    local["day"] = (local["starts_at"].dt.tz_convert(tz).dt.date if tz is not None
+                    else local["starts_at"].dt.date)
+    stats = local.groupby("day")[col].agg(["min", "max", "mean"]).reset_index()
     stats["spread"] = stats["max"] - stats["min"]
     return stats.sort_values("day")
 
@@ -51,30 +61,43 @@ app.layout = html.Div(
     children=[
         html.H1("⚡ Battery Analytics — Spot Prices"),
         html.P(
-            "Hourly prices from Tibber (Nord Pool day-ahead). History accumulates "
-            "every time fetch.py runs.",
+            "ENTSO-E day-ahead by bidding zone (EUR/MWh) by default; Tibber home "
+            "price as a secondary source. History grows as fetch_entsoe.py / fetch.py run.",
             style={"color": "#666"},
         ),
         html.Div(
             style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "alignItems": "center"},
             children=[
                 html.Div([
-                    html.Label("Home"),
-                    dcc.Dropdown(id="home", clearable=False, style={"width": "260px"}),
+                    html.Label("Source"),
+                    dcc.Dropdown(
+                        id="source",
+                        options=[
+                            {"label": "ENTSO-E zone (EUR)", "value": ZONE},
+                            {"label": "Tibber home (local)", "value": TIBBER},
+                        ],
+                        value=ZONE,
+                        clearable=False,
+                        style={"width": "220px"},
+                    ),
                 ]),
                 html.Div([
-                    html.Label("Metric"),
+                    html.Label("Zone / Home"),
+                    dcc.Dropdown(id="series", clearable=False, style={"width": "240px"}),
+                ]),
+                html.Div([
+                    html.Label("Metric (Tibber)"),
                     dcc.Dropdown(
                         id="metric",
-                        options=[{"label": v, "value": k} for k, v in METRICS.items()],
+                        options=[{"label": v, "value": k} for k, v in TIBBER_METRICS.items()],
                         value="energy",
                         clearable=False,
-                        style={"width": "260px"},
+                        style={"width": "200px"},
                     ),
                 ]),
                 html.Div([
                     html.Label("Resolution"),
-                    dcc.Dropdown(id="resolution", clearable=False, style={"width": "200px"}),
+                    dcc.Dropdown(id="resolution", clearable=False, style={"width": "180px"}),
                 ]),
             ],
         ),
@@ -82,33 +105,42 @@ app.layout = html.Div(
         dcc.Graph(id="price-curve"),
         html.H3("Daily min / max spread (battery arbitrage potential)"),
         dcc.Graph(id="spread-chart"),
-        # Re-read the DB periodically so a background cron fetch shows up live.
         dcc.Interval(id="tick", interval=60_000, n_intervals=0),
     ],
 )
 
 
 @app.callback(
-    Output("home", "options"),
-    Output("home", "value"),
+    Output("series", "options"),
+    Output("series", "value"),
+    Output("metric", "disabled"),
+    Input("source", "value"),
     Input("tick", "n_intervals"),
-    Input("home", "value"),
+    Input("series", "value"),
 )
-def _populate_homes(_n, current):
-    homes = list_homes(DB_PATH)
-    options = [{"label": h, "value": h} for h in homes]
-    value = current if current in homes else (homes[0] if homes else None)
-    return options, value
+def _populate_series(source, _n, current):
+    if source == ZONE:
+        items = list_zones(DB_PATH)
+        # Prefer SE_3 (Stockholm) as a sensible default if present.
+        default = "SE_3" if "SE_3" in items else (items[0] if items else None)
+    else:
+        items = list_homes(DB_PATH)
+        default = items[0] if items else None
+    options = [{"label": i, "value": i} for i in items]
+    value = current if current in items else default
+    return options, value, (source == ZONE)
 
 
 @app.callback(
     Output("resolution", "options"),
     Output("resolution", "value"),
+    Input("source", "value"),
     Input("tick", "n_intervals"),
     Input("resolution", "value"),
 )
-def _populate_resolutions(_n, current):
-    res = list_resolutions(DB_PATH) or ["HOURLY"]
+def _populate_resolutions(source, _n, current):
+    res = (list_zone_resolutions(DB_PATH) if source == ZONE else list_resolutions(DB_PATH))
+    res = res or ["HOURLY"]
     options = [{"label": r.replace("_", "-").title(), "value": r} for r in res]
     value = current if current in res else res[0]
     return options, value
@@ -129,42 +161,52 @@ def _kpi_card(label: str, value: str, color: str = "#111"):
     Output("price-curve", "figure"),
     Output("spread-chart", "figure"),
     Output("kpis", "children"),
-    Input("home", "value"),
+    Input("source", "value"),
+    Input("series", "value"),
     Input("metric", "value"),
     Input("resolution", "value"),
     Input("tick", "n_intervals"),
 )
-def _update(home, metric, resolution, _n):
-    df = load_prices(DB_PATH, home_id=home, resolution=resolution)
+def _update(source, series, metric, resolution, _n):
     empty = go.Figure().update_layout(
-        annotations=[dict(text="No data yet — run: python fetch.py",
+        annotations=[dict(text="No data yet — run fetch_entsoe.py / fetch.py",
                           showarrow=False, font=dict(size=16))]
     )
-    if df.empty:
+    if not series:
         return empty, empty, [_kpi_card("Status", "no data")]
 
-    cur = (df["currency"].dropna().iloc[0] if df["currency"].notna().any() else "")
-    unit = f"{cur}/kWh" if cur else "/kWh"
+    if source == ZONE:
+        df = load_zone_prices(DB_PATH, zone=series, resolution=resolution)
+        col, unit, title = "price", "EUR/MWh", f"{series} day-ahead"
+        fmt = "{:,.1f}"
+    else:
+        df = load_prices(DB_PATH, home_id=series, resolution=resolution)
+        col = metric
+        cur = (df["currency"].dropna().iloc[0] if not df.empty and df["currency"].notna().any()
+               else "")
+        unit, title = f"{cur}/kWh", f"{TIBBER_METRICS[metric]} ({series})"
+        fmt = "{:,.3f}"
+    if df.empty:
+        return empty, empty, [_kpi_card("Status", "no data for selection")]
 
-    curve = px.line(df, x="starts_at", y=metric, markers=False,
-                    labels={"starts_at": "", metric: unit})
-    curve.update_layout(title=f"{METRICS[metric]} ({unit})", hovermode="x unified",
+    curve = px.line(df, x="starts_at", y=col, labels={"starts_at": "", col: unit})
+    curve.update_layout(title=f"{title} ({unit})", hovermode="x unified",
                         margin=dict(t=50, b=20))
 
-    stats = _daily_stats(df, metric)
+    stats = _daily_stats(df, col)
     spread = go.Figure()
     spread.add_bar(x=stats["day"], y=stats["spread"], name="spread (max-min)")
     spread.add_scatter(x=stats["day"], y=stats["mean"], name="daily mean", mode="lines+markers")
     spread.update_layout(title=f"Daily spread & mean ({unit})", barmode="overlay",
                          margin=dict(t=50, b=20))
 
-    latest_day = stats.iloc[-1]
+    latest = stats.iloc[-1]
     kpis = [
-        _kpi_card("Intervals stored", f"{len(df)}"),
-        _kpi_card("Days tracked", f"{stats.shape[0]}"),
-        _kpi_card(f"Latest spread", f"{latest_day['spread']:.3f}", "#0a7d33"),
-        _kpi_card("Latest max", f"{latest_day['max']:.3f}"),
-        _kpi_card("Latest min", f"{latest_day['min']:.3f}"),
+        _kpi_card("Intervals stored", f"{len(df):,}"),
+        _kpi_card("Days tracked", f"{stats.shape[0]:,}"),
+        _kpi_card("Latest spread", fmt.format(latest["spread"]), "#0a7d33"),
+        _kpi_card("Latest max", fmt.format(latest["max"])),
+        _kpi_card("Latest min", fmt.format(latest["min"])),
     ]
     return curve, spread, kpis
 
