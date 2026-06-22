@@ -30,6 +30,7 @@ from .markets import (
     NORDIC_PRODUCTS,
     Product,
 )
+from .milp import MILPDispatchOptimizer
 
 __all__ = [
     "BatteryAsset",
@@ -45,4 +46,5 @@ __all__ = [
     "DispatchSchedule",
     "RevenueBreakdown",
     "ThresholdArbitrageOptimizer",
+    "MILPDispatchOptimizer",
 ]
