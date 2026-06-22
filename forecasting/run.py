@@ -28,6 +28,7 @@ from forecasting.backtest import (
     scenario_robust_dispatch,
 )
 from forecasting.features import build_features
+from forecasting.mpc import rolling_horizon_dispatch
 from forecasting.models import GBMForecaster, QuantileForecaster, seasonal_naive
 from forecasting.scenarios import daily_residual_blocks
 from optimizer import (
@@ -98,14 +99,22 @@ def main(argv: list[str] | None = None) -> int:
     ann = 365 / days
     base = ThresholdArbitrageOptimizer(25, 75).optimize(asset, test_data).revenue.net
     fc = forecast_driven_dispatch(asset, gbm_pred, actual, dt)
+    # Rolling-horizon (MPC): same model, but plan 48h / commit 24h, re-planning
+    # from realized SoC at each gate so the optimizer can see past midnight.
+    mpc = rolling_horizon_dispatch(asset, model, series, actual.index, dt,
+                                   lookahead_hours=48, commit_hours=24)
     perfect = MILPDispatchOptimizer(window_days=30).optimize(asset, test_data).revenue.net
 
+    cap = lambda v: 100 * v / perfect if perfect else float("nan")
     print(f"\n  dispatch net P&L ({data.currency}/MW/yr):")
-    print(f"    baseline (threshold/actual) : {base*ann:>10,.0f}")
-    print(f"    forecast (LP/forecast→actual): {fc['net']*ann:>10,.0f}   <- realistic")
+    print(f"    baseline (threshold/actual)  : {base*ann:>10,.0f}")
+    print(f"    forecast (LP/24h window)     : {fc['net']*ann:>10,.0f}   ({cap(fc['net']):.0f}% of ceiling)")
+    print(f"    rolling-MPC (48h look/24h commit): {mpc['net']*ann:>10,.0f}   ({cap(mpc['net']):.0f}% of ceiling) <- receding horizon")
     print(f"    perfect  (LP/actual)         : {perfect*ann:>10,.0f}   (ceiling)")
-    capture = 100 * fc["net"] / perfect if perfect else float("nan")
-    print(f"  forecast captures {capture:.0f}% of the perfect-foresight ceiling.")
+    lift = 100 * (mpc["net"] / fc["net"] - 1) if fc["net"] else float("nan")
+    print(f"  rolling-MPC vs fixed-window forecast: {lift:+.1f}% net P&L "
+          f"(lookahead past midnight {'pays' if lift > 0 else 'does not pay'}).")
+    capture = cap(fc["net"])
 
     # Does weather pay? Train a weather-augmented GBM on the same split and report
     # the MAE and dispatch-P&L lift vs the weather-free model above.

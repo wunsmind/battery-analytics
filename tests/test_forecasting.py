@@ -280,6 +280,71 @@ def test_scenario_robust_equals_point_with_zero_error_blocks():
     assert abs(point - rob) < 1e-6
 
 
+class _PerfectModel:
+    """A 'forecaster' holding the full truth series; predict() returns the actual
+    price for the rows it's asked about. Used to test the MPC plumbing in
+    isolation from forecast error."""
+
+    def __init__(self, truth: pd.Series):
+        self.truth = truth.astype(float)
+
+    def predict(self, X: pd.DataFrame) -> pd.Series:
+        return self.truth.reindex(X.index)
+
+
+def test_recursive_forecast_with_perfect_model_reproduces_actuals():
+    # If the model returns truth, the recursive (block-by-block) forecast must
+    # reproduce the actual prices over the whole multi-day horizon.
+    from forecasting.mpc import recursive_forecast
+    s = _series(24 * 30)
+    split = 24 * 20
+    history, horizon = s.iloc[:split], s.index[split:split + 48]
+    fc = recursive_forecast(_PerfectModel(s), history, horizon, block_steps=24)
+    assert len(fc) == 48
+    pd.testing.assert_series_equal(fc, s.reindex(horizon), check_names=False)
+
+
+def test_rolling_horizon_respects_soc_and_loses_to_perfect():
+    from forecasting.mpc import rolling_horizon_dispatch
+    s = _series(24 * 40)
+    asset = _eur_asset()
+    X, y = build_features(s)
+    cut = int(len(X) * 0.6)
+    model = GBMForecaster(max_iter=100).fit(X.iloc[:cut], y.iloc[:cut])
+    test_idx = X.index[cut:]
+    mpc = rolling_horizon_dispatch(asset, model, s, test_idx, dt=1.0,
+                                   lookahead_hours=48, commit_hours=24)
+    # Settles on actuals, so net is finite and degradation is non-negative.
+    assert mpc["throughput_mwh"] >= 0 and mpc["degradation"] >= -1e-9
+    # A real (imperfect) controller can't beat *global* perfect foresight (one LP
+    # over the whole span — the true ceiling, not a windowed dispatch).
+    actual = y.reindex(test_idx)
+    perfect = forecast_driven_dispatch(asset, actual, actual, dt=1.0,
+                                       window_hours=len(actual))["net"]
+    assert mpc["net"] <= perfect + 1e-6
+
+
+def test_rolling_horizon_perfect_model_nears_global_ceiling():
+    # With a perfect model the receding-horizon controller should approach *global*
+    # perfect foresight (its forecasts ARE the actuals), and beat the disjoint-48h
+    # windowed dispatch — re-planning every 24h erases most boundary artifacts.
+    from forecasting.mpc import rolling_horizon_dispatch
+    s = _series(24 * 30)
+    asset = _eur_asset()
+    X, _ = build_features(s)
+    test_idx = X.index[24 * 10:]
+    mpc = rolling_horizon_dispatch(asset, _PerfectModel(s), s, test_idx, dt=1.0,
+                                   lookahead_hours=48, commit_hours=24)
+    actual = s.reindex(test_idx)
+    ceiling = forecast_driven_dispatch(asset, actual, actual, dt=1.0,
+                                       window_hours=len(actual))["net"]
+    disjoint48 = forecast_driven_dispatch(asset, actual, actual, dt=1.0,
+                                          window_hours=48)["net"]
+    assert mpc["net"] <= ceiling + 1e-6           # can't beat the global LP
+    assert mpc["net"] > 0.95 * ceiling            # but lands very close to it
+    assert mpc["net"] >= disjoint48 - 1e-6        # and >= disjoint 48h windows
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
