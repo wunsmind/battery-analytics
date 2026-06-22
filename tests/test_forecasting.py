@@ -9,11 +9,19 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from forecasting.backtest import forecast_driven_dispatch, metrics
+from forecasting.backtest import forecast_driven_dispatch, metrics, robust_dispatch
 from forecasting.features import LAGS, build_features
-from forecasting.models import GBMForecaster, seasonal_naive
+from forecasting.models import GBMForecaster, QuantileForecaster, seasonal_naive
 from optimizer import BatteryAsset
 from optimizer.degradation import ThroughputDegradationModel
+
+
+def _eur_asset() -> BatteryAsset:
+    return BatteryAsset(
+        name="t", energy_capacity_mwh=2.0, power_max_mw=1.0, round_trip_efficiency=0.9,
+        soc_min_frac=0.0, soc_max_frac=1.0, currency="EUR",
+        degradation=ThroughputDegradationModel(pack_cost=500.0, lifetime_throughput_mwh=100.0),
+    )
 
 
 def _series(n: int = 24 * 60) -> pd.Series:
@@ -58,6 +66,30 @@ def test_forecast_driven_never_exceeds_perfect():
     noisy = s + np.random.default_rng(1).normal(0, 20, len(s))
     fcast = forecast_driven_dispatch(asset, noisy, s, dt=1.0)["net"]
     assert fcast <= perfect + 1e-6  # imperfect forecast can't beat perfect foresight
+
+
+def test_quantiles_are_monotone_and_calibrated():
+    s = _series()
+    X, y = build_features(s)
+    cut = int(len(X) * 0.7)
+    qf = QuantileForecaster(max_iter=100).fit(X.iloc[:cut], y.iloc[:cut])
+    pred = qf.predict(X.iloc[cut:])
+    # columns sorted low->high every row
+    assert (pred["q10"] <= pred["q50"] + 1e-9).all()
+    assert (pred["q50"] <= pred["q90"] + 1e-9).all()
+    cov = qf.coverage(X.iloc[cut:], y.iloc[cut:])
+    assert 0.5 < cov < 1.0  # roughly calibrated toward 0.8
+
+
+def test_robust_equals_point_when_no_uncertainty():
+    # If all scenarios are identical, robust dispatch == point-forecast dispatch.
+    s = _series(24 * 14)
+    asset = _eur_asset()
+    fcast = s + np.random.default_rng(2).normal(0, 15, len(s))
+    q = pd.DataFrame({"q10": fcast, "q50": fcast, "q90": fcast}, index=s.index)
+    point = forecast_driven_dispatch(asset, fcast, s, dt=1.0)["net"]
+    rob = robust_dispatch(asset, q, s, dt=1.0, beta=1.0)["net"]
+    assert abs(point - rob) < 1e-6
 
 
 def _run_all():

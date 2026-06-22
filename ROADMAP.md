@@ -43,8 +43,13 @@ Status legend: ✅ done · 🚧 in progress · ⏳ blocked/waiting · ⬜ planne
 - 🚧 **Price forecasting** — day-ahead (`forecasting/`):
   - ✅ Seasonal-naive baseline + gradient-boosting forecaster (calendar +
     same-hour lag features, no leakage). ~31% better MAE than naive on SE_3/SE_4.
-  - ⬜ **Probabilistic** forecasts (quantiles) for robust/stochastic dispatch
-  - ⬜ Weather features; intraday horizon; periodic retrain
+  - 🚧 **Probabilistic** forecasts: `QuantileForecaster` (P10/P50/P90) + risk-aware
+    `robust_dispatch` (scenario LP, β expected↔max-min). Works, but reveals the
+    quantile band is under-calibrated (~65% vs 80%) and marginal-quantile
+    "scenarios" are too crude → robust cuts variance at a return cost without
+    improving worst-case. Next: **joint scenario generation** (bootstrapped
+    residual paths) + **conformal calibration**.
+  - ⬜ Weather features (Open-Meteo / ENTSO-E wind+load); intraday; periodic retrain
 - ✅ **Forecast-driven backtest** (`forecasting/run.py`): dispatch on forecast,
   settle on actual → realistic P&L (captures ~67–70% of the perfect-foresight
   ceiling on SE_3/SE_4), bracketed by baseline and ceiling.

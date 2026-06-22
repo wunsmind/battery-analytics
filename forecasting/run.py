@@ -17,12 +17,13 @@ import argparse
 import os
 import sys
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-from forecasting.backtest import forecast_driven_dispatch, metrics
+from forecasting.backtest import forecast_driven_dispatch, metrics, robust_dispatch
 from forecasting.features import build_features
-from forecasting.models import GBMForecaster, seasonal_naive
+from forecasting.models import GBMForecaster, QuantileForecaster, seasonal_naive
 from optimizer import (
     BatteryAsset,
     MarketData,
@@ -72,16 +73,39 @@ def main(argv: list[str] | None = None) -> int:
                            spot_price=actual, currency=data.currency)
     days = (actual.index[-1] - actual.index[0]).total_seconds() / 86400 or 1
 
+    ann = 365 / days
     base = ThresholdArbitrageOptimizer(25, 75).optimize(asset, test_data).revenue.net
-    fcast = forecast_driven_dispatch(asset, gbm_pred, actual, dt)["net"]
+    fc = forecast_driven_dispatch(asset, gbm_pred, actual, dt)
     perfect = MILPDispatchOptimizer(window_days=30).optimize(asset, test_data).revenue.net
 
     print(f"\n  dispatch net P&L ({data.currency}/MW/yr):")
-    print(f"    baseline (threshold/actual) : {base*365/days:>10,.0f}")
-    print(f"    forecast (LP/forecast→actual): {fcast*365/days:>10,.0f}   <- realistic")
-    print(f"    perfect  (LP/actual)         : {perfect*365/days:>10,.0f}   (ceiling)")
-    capture = 100 * fcast / perfect if perfect else float("nan")
-    print(f"\n  forecast captures {capture:.0f}% of the perfect-foresight ceiling.")
+    print(f"    baseline (threshold/actual) : {base*ann:>10,.0f}")
+    print(f"    forecast (LP/forecast→actual): {fc['net']*ann:>10,.0f}   <- realistic")
+    print(f"    perfect  (LP/actual)         : {perfect*ann:>10,.0f}   (ceiling)")
+    capture = 100 * fc["net"] / perfect if perfect else float("nan")
+    print(f"  forecast captures {capture:.0f}% of the perfect-foresight ceiling.")
+
+    # Probabilistic forecast + robust (risk-aware) dispatch.
+    qf = QuantileForecaster().fit(X[train], y[train])
+    q_test = qf.predict(X[test])
+    cov = qf.coverage(X[test], actual)
+    print(f"\n  quantile calibration: actuals inside P10–P90 {100*cov:.0f}% of the time "
+          f"(target 80%)")
+
+    rob_exp = robust_dispatch(asset, q_test, actual, dt, beta=0.0)
+    rob_rob = robust_dispatch(asset, q_test, actual, dt, beta=1.0)
+
+    def _risk(res):
+        p = np.array(res["daily_pnl"])
+        return res["net"] * ann, p.std(), p.min()
+
+    print(f"\n  robust dispatch — risk vs return ({data.currency}):")
+    print(f"    {'strategy':24}{'net/MW/yr':>12}{'daily σ':>10}{'worst day':>11}")
+    for label, res in [("point forecast", fc),
+                       ("robust β=0 (expected)", rob_exp),
+                       ("robust β=1 (max-min)", rob_rob)]:
+        a, s, w = _risk(res)
+        print(f"    {label:24}{a:>12,.0f}{s:>10,.0f}{w:>11,.0f}")
     return 0
 
 

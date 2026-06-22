@@ -58,6 +58,12 @@ forecast-driven (realistic), perfect foresight (ceiling). On SE_3/SE_4 the GBM i
 ~31% better than seasonal-naive and captures ~67–70% of the perfect-foresight
 arbitrage value.
 
+There's also a **probabilistic** path: `QuantileForecaster` (P10/P50/P90) and a
+risk-aware `robust_dispatch` (scenario LP with a β knob from expected-value to
+max-min). It runs, but currently reveals the quantile band is under-calibrated and
+that marginal-quantile scenarios are too crude for a clean robustness win — the
+next step is joint scenario generation + conformal calibration (see ROADMAP).
+
 ### ENTSO-E deep history (wholesale zone prices)
 
 `fetch_entsoe.py` pulls day-ahead prices per bidding zone (EUR/MWh — the "pure"
