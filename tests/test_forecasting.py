@@ -116,6 +116,101 @@ def test_openmeteo_to_records_shapes_rows():
     assert to_records("SE_3", empty) == []
 
 
+def _exog(idx: pd.DatetimeIndex) -> pd.DataFrame:
+    hours = np.arange(len(idx))
+    return pd.DataFrame(
+        {"wind_DE_LU": 8000 + 5000 * np.cos(2 * np.pi * hours / 168),
+         "load_SE_4": 2000 + 800 * np.sin(2 * np.pi * (hours % 24) / 24)},
+        index=idx,
+    )
+
+
+def test_exog_folds_all_columns_generically():
+    s = _series()
+    base = list(build_features(s)[0].columns)
+    X, _ = build_features(s, exog=_exog(s.index))
+    assert "wind_DE_LU" in X.columns and "load_SE_4" in X.columns
+    assert not X.isna().any().any()
+    # exog is fully backfilled, so it doesn't change the row count
+    assert len(X) == len(build_features(s)[0])
+    # absent/empty exog falls back to exactly the calendar+lag set
+    assert list(build_features(s, exog=None)[0].columns) == base
+    assert list(build_features(s, exog=pd.DataFrame())[0].columns) == base
+
+
+def test_exog_all_nan_column_is_dropped():
+    # A column with no data must not survive (it would NaN-drop every row).
+    s = _series()
+    e = _exog(s.index)
+    e["empty"] = np.nan
+    X, _ = build_features(s, exog=e)
+    assert "empty" not in X.columns and len(X) == len(build_features(s)[0])
+
+
+def test_weather_and_exog_compose():
+    s = _series()
+    X, _ = build_features(s, _weather(s.index), _exog(s.index))
+    for col in ("temp_c", "precip_7d", "wind_DE_LU", "load_SE_4"):
+        assert col in X.columns
+    assert not X.isna().any().any()
+
+
+def test_exog_helps_when_price_depends_on_cross_border_wind():
+    # Price depresses with foreign wind (non-periodic) the price lags can't recover.
+    s = _series()
+    rng = np.random.default_rng(13)
+    wind = pd.Series(rng.normal(8000, 2500, len(s)), index=s.index)
+    s = s - 0.004 * wind  # ~10 EUR swing, as DE/DK wind drives SE_4
+    Xc, yc = build_features(s)
+    Xe, ye = build_features(s, exog=wind.to_frame("wind_DE_LU"))
+    cut = int(len(Xc) * 0.7)
+    mae_c = metrics(yc.iloc[cut:],
+                    GBMForecaster(max_iter=150).fit(Xc.iloc[:cut], yc.iloc[:cut]).predict(Xc.iloc[cut:]))["mae"]
+    mae_e = metrics(ye.iloc[cut:],
+                    GBMForecaster(max_iter=150).fit(Xe.iloc[:cut], ye.iloc[:cut]).predict(Xe.iloc[cut:]))["mae"]
+    assert mae_e < mae_c
+
+
+def test_entsoe_forecasts_to_records():
+    from entsoe_forecasts import to_records
+    idx = pd.date_range("2024-01-01", periods=3, freq="h", tz="UTC")
+    frame = pd.DataFrame({"wind": [100.0, np.nan, 300.0], "load": [2000.0, 2100.0, 2200.0]},
+                         index=idx)
+    rows = to_records("DE_LU", frame)
+    # 3 load + 2 wind (the NaN wind hour is dropped); resolution tagged HOURLY
+    assert len(rows) == 5
+    assert all(r["resolution"] == "HOURLY" for r in rows)
+    assert {r["kind"] for r in rows} == {"wind", "load"}
+    assert sum(r["kind"] == "wind" for r in rows) == 2
+    assert rows[0]["zone"] == "DE_LU" and rows[0]["starts_at"].endswith("+00:00")
+    # quarter-hourly cadence is detected from the index step
+    q = pd.date_range("2024-01-01", periods=4, freq="15min", tz="UTC")
+    qrows = to_records("DK_2", pd.DataFrame({"wind": [1.0, 2.0, 3.0, 4.0]}, index=q))
+    assert all(r["resolution"] == "QUARTER_HOURLY" for r in qrows)
+    assert to_records("DE_LU", pd.DataFrame()) == []
+
+
+def test_forecasts_wide_pivot_roundtrips():
+    import tempfile
+
+    from store.db import load_forecasts_wide, upsert_zone_forecasts
+    tmp = tempfile.mkdtemp()
+    db = f"{tmp}/t.db"
+    rows = [
+        {"zone": "DE_LU", "starts_at": "2024-01-01T00:00:00+00:00", "kind": "wind",
+         "resolution": "HOURLY", "value": 9000.0, "source": "entsoe"},
+        {"zone": "SE_4", "starts_at": "2024-01-01T00:00:00+00:00", "kind": "load",
+         "resolution": "HOURLY", "value": 1800.0, "source": "entsoe"},
+    ]
+    assert upsert_zone_forecasts(db, rows) == 2
+    wide = load_forecasts_wide(db, zones=["DE_LU", "SE_4"])
+    assert set(wide.columns) == {"wind_DE_LU", "load_SE_4"}
+    assert wide.loc[wide.index[0], "wind_DE_LU"] == 9000.0
+    # idempotent upsert: re-writing the same keys doesn't duplicate
+    upsert_zone_forecasts(db, rows)
+    assert len(load_forecasts_wide(db)) == 1
+
+
 def test_gbm_beats_seasonal_naive():
     s = _series()
     X, y = build_features(s)

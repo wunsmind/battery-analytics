@@ -37,6 +37,17 @@ from optimizer import (
     ThresholdArbitrageOptimizer,
 )
 
+# Cross-border neighbours whose gate-aligned wind/load forecasts drive a zone via
+# interconnectors. SE_4 couples hard to Germany (Baltic Cable / Kontek) and east
+# Denmark (Öresund); SE_3 to west Denmark (Konti-Skan). The target zone itself is
+# always added so its own load (and any published wind) forecast is included.
+CROSS_BORDER = {
+    "SE_4": ["DE_LU", "DK_2", "DK_1"],
+    "SE_3": ["DK_1"],
+    "SE_2": [],
+    "SE_1": [],
+}
+
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Forecast + dispatch backtest.")
@@ -129,6 +140,56 @@ def main(argv: list[str] | None = None) -> int:
             print("\n  + weather: present but doesn't cover the test split — skipping.")
     else:
         print("\n  + weather: no rows in `weather` table — run fetch_weather.py to enable.")
+
+    # Gate-aligned ENTSO-E forecasts: cross-border wind/solar + own load. Unlike
+    # the weather block above (archived *actuals* — a mild look-ahead), these are
+    # the genuine day-ahead-vintage signals a trader has at the gate. We test
+    # whether they add lift *on top of* weather, on identical rows within the
+    # forecast coverage window so the gain can't be a sample-window artefact.
+    from store.db import load_forecasts_wide
+    fc_zones = sorted({args.zone} | set(CROSS_BORDER.get(args.zone, [])))
+    exog = load_forecasts_wide(zone_db, zones=fc_zones)
+    if exog.empty:
+        print("\n  + forecasts: no rows in `zone_forecasts` — run fetch_forecasts.py to enable.")
+    else:
+        lo, hi = exog.index.min(), exog.index.max()
+        Xb, yb = build_features(series, weather)                 # weather-only
+        Xe, ye = build_features(series, weather, exog=exog)      # + forecasts
+        common = Xb.index.intersection(Xe.index)
+        common = common[(common >= lo) & (common <= hi)]
+        tr_f = common[common < cutoff]
+        te_f = common[common >= cutoff]
+        added = [c for c in Xe.columns if c not in Xb.columns]
+        if len(te_f) and len(tr_f) and added:
+            mb = GBMForecaster().fit(Xb.loc[tr_f], yb.loc[tr_f])
+            me = GBMForecaster().fit(Xe.loc[tr_f], ye.loc[tr_f])
+            a_f = yb.loc[te_f]
+            pb, pe = mb.predict(Xb.loc[te_f]), me.predict(Xe.loc[te_f])
+            m_b, m_e = metrics(a_f, pb), metrics(a_f, pe)
+            f_b = forecast_driven_dispatch(asset, pb, a_f, dt)
+            f_e = forecast_driven_dispatch(asset, pe, a_f, dt)
+            ann_f = 365 / ((te_f[-1] - te_f[0]).total_seconds() / 86400 or 1)
+            mae_lift = 100 * (1 - m_e["mae"] / m_b["mae"])
+            pnl_lift = 100 * (f_e["net"] / f_b["net"] - 1) if f_b["net"] else float("nan")
+            base_lbl = "weather-only" if weather is not None else "calendar/lag"
+            print(f"\n  + ENTSO-E forecasts ({len(added)}: {', '.join(added)}):")
+            print(f"    coverage {lo.date()}→{hi.date()} | test {len(te_f):,} pts "
+                  f"(common window, vs {base_lbl})")
+            print(f"    forecast MAE  — +forecast {m_e['mae']:.2f} vs {base_lbl} {m_b['mae']:.2f} "
+                  f"({mae_lift:+.0f}%)")
+            print(f"    dispatch net  — +forecast {f_e['net']*ann_f:>10,.0f} vs "
+                  f"{base_lbl} {f_b['net']*ann_f:>10,.0f} ({pnl_lift:+.1f}%)")
+            from sklearn.inspection import permutation_importance
+            imp = permutation_importance(
+                me.model, Xe.loc[te_f], a_f, n_repeats=5, random_state=0,
+                scoring="neg_mean_absolute_error")
+            ranked = sorted(((c, imp.importances_mean[i]) for i, c in enumerate(Xe.columns)
+                             if c in added), key=lambda kv: kv[1], reverse=True)
+            print(f"    forecast feature importance (MAE rise when shuffled, {data.currency}/MWh):")
+            for name, val in ranked:
+                print(f"      {name:12}{val:6.2f}")
+        else:
+            print("\n  + forecasts: present but don't cover the test split — skipping.")
 
     # Probabilistic forecast + robust (risk-aware) dispatch.
     qf = QuantileForecaster().fit(X[train], y[train])

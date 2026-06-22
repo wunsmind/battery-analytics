@@ -63,8 +63,30 @@ Status legend: ✅ done · 🚧 in progress · ⏳ blocked/waiting · ⬜ planne
     basin-wide reservoir levels over weeks. *Refinements:* (1) reservoir-level /
     snowpack data (a slower, separate source) for the real hydro lever; (2) one
     representative point per zone today — a load/wind-weighted multi-point average
-    would capture more; (3) cross-border weather (German/Danish wind drives SE_4
-    via interconnectors) and ENTSO-E wind+load forecasts as gate-aligned sources.
+    would capture more; (3) cross-border weather + ENTSO-E gate-aligned forecasts
+    — ✅ **done**, see next bullet.
+  - ✅ **Gate-aligned ENTSO-E forecasts** (cross-border wind/solar + load):
+    `entsoe_forecasts.py` → `fetch_forecasts.py` → `zone_forecasts` table →
+    `build_features(exog=…)`. Pulls the day-ahead *forecasts* a trader actually has
+    at the gate — total zonal wind+solar generation and load (MW) — for the target
+    zone **and its interconnector neighbours** — both generation *and* load (SE_4 ←
+    DE_LU / DK_2 / DK_1; SE_3 ← DK_1). Two reasons this beats the Open-Meteo point
+    weather: (a) it's *honest* — the genuine day-ahead vintage, not archived
+    **actual** weather (the weather block's mild look-ahead); (b) system-level
+    generation/load MW is the quantity that clears the market, and it carries the
+    cross-border signal that point weather can't. **Finding** (test on the
+    forecast-coverage window, *on top of* weather, so the comparison is
+    apples-to-apples): MAE **SE_4 −11% / SE_3 −5%**, dispatch P&L **SE_4 +10.7% /
+    SE_3 +6.4%** — and the SE_4 gain is dominated by **German** drivers
+    (importance: `solar_DE_LU` 5.2, `wind_SE_4` 4.4, `load_DE_LU` 2.1, `load_SE_4`
+    1.5, `wind_DE_LU` 1.4): German demand pulls power out of SE_4 across the cables
+    just as German wind floods it in — the interconnector thesis, confirmed twice
+    over. SE_3, weakly coupled to Germany, leans on its own load+wind (`load_SE_3`
+    6.5, `wind_SE_3` 4.6) with a small Danish (`wind_DK_1` 1.1, `load_DK_1` 1.0)
+    contribution. The headline weather→+forecast lift is *additive* and
+    *non-optimistic*: the honest signal still pays. (Sweden stopped publishing SE_4
+    wind/solar mid-2025; the ingester skips-and-continues, and the deep history
+    still trains the feature.)
 - ✅ **Forecast-driven backtest** (`forecasting/run.py`): dispatch on forecast,
   settle on actual → realistic P&L (captures ~67–70% of the perfect-foresight
   ceiling on SE_3/SE_4), bracketed by baseline and ceiling.

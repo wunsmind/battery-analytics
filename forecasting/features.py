@@ -33,14 +33,31 @@ LOCAL_TZ = "Europe/Stockholm"
 WEATHER_COLS = ("temp_c", "wind_100m", "solar_rad", "cloud_cover", "precip")
 
 
+def _fold_onto(idx: pd.DatetimeIndex, frame: pd.DataFrame, cols) -> pd.DataFrame:
+    """Reindex `frame[cols]` onto `idx`, interpolating sub-hourly gaps and
+    forward/back-filling the edges. Returns only the columns that carry data."""
+    f = frame[cols].sort_index()
+    f = f[~f.index.duplicated(keep="last")]
+    aligned = f.reindex(f.index.union(idx)).interpolate("time").reindex(idx)
+    return aligned.loc[:, [c for c in cols if aligned[c].notna().any()]]
+
+
 def build_features(
-    series: pd.Series, weather: pd.DataFrame | None = None
+    series: pd.Series,
+    weather: pd.DataFrame | None = None,
+    exog: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Return (X, y) aligned and NaN-dropped for an hourly price series.
 
     weather: optional time-indexed (UTC) DataFrame with temp_c / wind_100m. It is
     reindexed to the price timestamps (interpolated across sub-hourly gaps), so it
     works for both HOURLY and QUARTER_HOURLY series.
+
+    exog: optional time-indexed (UTC) DataFrame of *gate-aligned* exogenous
+    drivers (ENTSO-E day-ahead wind/solar/load forecasts — see entsoe_forecasts).
+    Every column is folded in generically by name (e.g. wind_DE_LU, load_SE_4),
+    using the same reindex/interpolate as weather. Unlike the archived-actual
+    weather proxy, these are genuinely knowable at the gate — no look-ahead.
     """
     s = series.astype(float).sort_index()
     idx = s.index
@@ -57,15 +74,18 @@ def build_features(
 
     if weather is not None and not weather.empty:
         present = [c for c in WEATHER_COLS if c in weather.columns]
-        w = weather[present].sort_index()
-        w = w[~w.index.duplicated(keep="last")]
-        aligned = w.reindex(w.index.union(idx)).interpolate("time").reindex(idx)
-        for col in present:
+        aligned = _fold_onto(idx, weather, present)
+        for col in aligned.columns:
             X[col] = aligned[col].ffill().bfill()
-        if "precip" in present:
+        if "precip" in aligned.columns:
             # 7-day rolling precipitation — a better hydro-inflow proxy than the
             # mostly-zero hourly value. Time-based window handles HOURLY & 15-min.
             X["precip_7d"] = X["precip"].rolling("7D").sum()
+
+    if exog is not None and not exog.empty:
+        aligned = _fold_onto(idx, exog, list(exog.columns))
+        for col in aligned.columns:
+            X[col] = aligned[col].ffill().bfill()
 
     df = X.join(s.rename("y")).dropna()
     return df.drop(columns="y"), df["y"]
