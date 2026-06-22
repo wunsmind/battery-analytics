@@ -44,6 +44,78 @@ def test_features_no_leakage_and_shape():
     assert not X.isna().any().any()
 
 
+def _weather(idx: pd.DatetimeIndex) -> pd.DataFrame:
+    hours = np.arange(len(idx))
+    rng = np.random.default_rng(7)
+    return pd.DataFrame(
+        {"temp_c": 5 + 10 * np.sin(2 * np.pi * (hours % 24) / 24),
+         "wind_100m": 20 + 15 * np.cos(2 * np.pi * hours / 168),
+         "solar_rad": np.clip(400 * np.sin(2 * np.pi * (hours % 24) / 24), 0, None),
+         "cloud_cover": rng.uniform(0, 100, len(idx)),
+         "precip": rng.gamma(0.3, 1.0, len(idx))},
+        index=idx,
+    )
+
+
+def test_weather_absent_leaves_columns_unchanged():
+    s = _series()
+    base_cols = list(build_features(s)[0].columns)
+    # explicit None and empty frame must both fall back to the weather-free set
+    assert list(build_features(s, None)[0].columns) == base_cols
+    assert list(build_features(s, pd.DataFrame())[0].columns) == base_cols
+
+
+def test_weather_features_added_and_no_nan():
+    s = _series()
+    X, y = build_features(s, _weather(s.index))
+    # all five raw drivers plus the derived 7-day precip sum
+    for col in ("temp_c", "wind_100m", "solar_rad", "cloud_cover", "precip", "precip_7d"):
+        assert col in X.columns
+    assert not X.isna().any().any()
+    # weather doesn't change row count vs weather-free (it's fully backfilled)
+    assert len(X) == len(build_features(s)[0])
+
+
+def test_weather_partial_columns_only_add_present():
+    # A frame with a subset of drivers adds only those (no precip -> no precip_7d).
+    s = _series()
+    w = _weather(s.index)[["temp_c", "solar_rad"]]
+    X, _ = build_features(s, w)
+    assert "solar_rad" in X.columns and "temp_c" in X.columns
+    assert "wind_100m" not in X.columns and "precip_7d" not in X.columns
+
+
+def test_weather_helps_when_price_depends_on_wind():
+    # Price driven by wind that is NOT purely periodic (white noise), so the price
+    # lags can't recover it — only the weather feature can. Mirrors reality: wind
+    # is genuine exogenous information beyond yesterday/last-week's price.
+    s = _series()
+    rng = np.random.default_rng(11)
+    wind = pd.Series(rng.normal(20, 8, len(s)), index=s.index)
+    s = s - 1.5 * wind  # wind depresses price, as in SE3/SE4
+    Xc, yc = build_features(s)
+    Xw, yw = build_features(s, wind.to_frame("wind_100m"))
+    cut = int(len(Xc) * 0.7)
+    mae_c = metrics(yc.iloc[cut:],
+                    GBMForecaster(max_iter=150).fit(Xc.iloc[:cut], yc.iloc[:cut]).predict(Xc.iloc[cut:]))["mae"]
+    mae_w = metrics(yw.iloc[cut:],
+                    GBMForecaster(max_iter=150).fit(Xw.iloc[:cut], yw.iloc[:cut]).predict(Xw.iloc[cut:]))["mae"]
+    assert mae_w < mae_c
+
+
+def test_openmeteo_to_records_shapes_rows():
+    from weather.openmeteo import to_records
+    idx = pd.date_range("2026-01-01", periods=3, freq="h", tz="UTC")
+    df = pd.DataFrame({"temp_c": [1.0, np.nan, 3.0], "wind_100m": [10.0, 20.0, np.nan]}, index=idx)
+    rows = to_records("SE_3", df)
+    assert len(rows) == 3 and rows[0]["zone"] == "SE_3"
+    assert rows[0]["starts_at"].endswith("+00:00")
+    assert rows[1]["temp_c"] is None and rows[1]["wind_100m"] == 20.0
+    # a fully-empty row is dropped
+    empty = pd.DataFrame({"temp_c": [np.nan], "wind_100m": [np.nan]}, index=idx[:1])
+    assert to_records("SE_3", empty) == []
+
+
 def test_gbm_beats_seasonal_naive():
     s = _series()
     X, y = build_features(s)
