@@ -19,6 +19,7 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, dcc, html
 from dotenv import load_dotenv
 
+from pricing import DEFAULT_SEK_PER_EUR, build_breakdown
 from store.db import (
     list_homes,
     list_resolutions,
@@ -31,10 +32,12 @@ from store.db import (
 load_dotenv()
 DB_PATH = os.getenv("DB_PATH", "prices.db")            # Tibber home prices (tracked)
 ZONE_DB_PATH = os.getenv("ZONE_DB_PATH", "market.db")  # ENTSO-E zones (reproducible, ignored)
+SEK_PER_EUR = float(os.getenv("SEK_PER_EUR", DEFAULT_SEK_PER_EUR))
 
 # Source-specific config: how to load, which column holds the price, and the unit.
 ZONE = "zone"
 TIBBER = "tibber"
+BREAKDOWN = "breakdown"
 TIBBER_METRICS = {
     "energy": "Spot / energy",
     "total": "Total (energy + tax)",
@@ -62,8 +65,9 @@ app.layout = html.Div(
     children=[
         html.H1("⚡ Battery Analytics — Spot Prices"),
         html.P(
-            "ENTSO-E day-ahead by bidding zone (EUR/MWh) by default; Tibber home "
-            "price as a secondary source. History grows as fetch_entsoe.py / fetch.py run.",
+            "ENTSO-E day-ahead by bidding zone (EUR/MWh) by default; Tibber home price "
+            "as a secondary source; or the EUR Breakdown decomposing the consumer total "
+            "into wholesale + Tibber markup + tax & fees.",
             style={"color": "#666"},
         ),
         html.Div(
@@ -76,6 +80,7 @@ app.layout = html.Div(
                         options=[
                             {"label": "ENTSO-E zone (EUR)", "value": ZONE},
                             {"label": "Tibber home (local)", "value": TIBBER},
+                            {"label": "Breakdown (EUR): wholesale + markup + tax", "value": BREAKDOWN},
                         ],
                         value=ZONE,
                         clearable=False,
@@ -120,7 +125,7 @@ app.layout = html.Div(
     Input("series", "value"),
 )
 def _populate_series(source, _n, current):
-    if source == ZONE:
+    if source in (ZONE, BREAKDOWN):
         items = list_zones(ZONE_DB_PATH)
         # Prefer SE_3 (Stockholm) as a sensible default if present.
         default = "SE_3" if "SE_3" in items else (items[0] if items else None)
@@ -129,7 +134,7 @@ def _populate_series(source, _n, current):
         default = items[0] if items else None
     options = [{"label": i, "value": i} for i in items]
     value = current if current in items else default
-    return options, value, (source == ZONE)
+    return options, value, (source != TIBBER)
 
 
 @app.callback(
@@ -140,7 +145,8 @@ def _populate_series(source, _n, current):
     Input("resolution", "value"),
 )
 def _populate_resolutions(source, _n, current):
-    res = (list_zone_resolutions(ZONE_DB_PATH) if source == ZONE else list_resolutions(DB_PATH))
+    res = (list_zone_resolutions(ZONE_DB_PATH) if source in (ZONE, BREAKDOWN)
+           else list_resolutions(DB_PATH))
     res = res or ["HOURLY"]
     options = [{"label": r.replace("_", "-").title(), "value": r} for r in res]
     value = current if current in res else res[0]
@@ -175,6 +181,41 @@ def _update(source, series, metric, resolution, _n):
     )
     if not series:
         return empty, empty, [_kpi_card("Status", "no data")]
+
+    if source == BREAKDOWN:
+        df = build_breakdown(DB_PATH, ZONE_DB_PATH, zone=series,
+                             resolution=resolution, sek_per_eur=SEK_PER_EUR)
+        if df.empty:
+            return empty, empty, [_kpi_card("Status",
+                                            f"no Tibber↔{series} overlap at {resolution}")]
+        labels = {"spot": "Wholesale spot", "markup": "Tibber markup", "tax": "Tax & fees"}
+        long = df.melt(id_vars="starts_at", value_vars=list(labels),
+                       var_name="component", value_name="val")
+        long["component"] = long["component"].map(labels)
+        area = px.area(long, x="starts_at", y="val", color="component",
+                       labels={"starts_at": "", "val": "EUR/MWh"})
+        area.add_scatter(x=df["starts_at"], y=df["total"], name="Total",
+                         mode="lines", line=dict(color="black", dash="dash"))
+        area.update_layout(title=f"Consumer price breakdown vs {series} wholesale (EUR/MWh)",
+                           hovermode="x unified", margin=dict(t=50, b=20))
+
+        means = df[["spot", "markup", "tax", "total"]].mean()
+        def _share(c):
+            return 100 * means[c] / means["total"] if means["total"] else 0.0
+        stats = _daily_stats(df, "total")
+        spread = go.Figure()
+        spread.add_bar(x=stats["day"], y=stats["spread"], name="total spread (max-min)")
+        spread.add_scatter(x=stats["day"], y=stats["mean"], name="daily mean total",
+                           mode="lines+markers")
+        spread.update_layout(title="Daily total spread & mean (EUR/MWh)", margin=dict(t=50, b=20))
+        kpis = [
+            _kpi_card("Avg total", f"{means['total']:.1f} EUR/MWh"),
+            _kpi_card("Wholesale", f"{_share('spot'):.0f}%", "#1f77b4"),
+            _kpi_card("Markup", f"{_share('markup'):.0f}%", "#ff7f0e"),
+            _kpi_card("Tax & fees", f"{_share('tax'):.0f}%", "#2ca02c"),
+            _kpi_card("FX SEK/EUR", f"{SEK_PER_EUR:.2f}"),
+        ]
+        return area, spread, kpis
 
     if source == ZONE:
         df = load_zone_prices(ZONE_DB_PATH, zone=series, resolution=resolution)
