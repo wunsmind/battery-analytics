@@ -21,9 +21,15 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-from forecasting.backtest import forecast_driven_dispatch, metrics, robust_dispatch
+from forecasting.backtest import (
+    forecast_driven_dispatch,
+    metrics,
+    robust_dispatch,
+    scenario_robust_dispatch,
+)
 from forecasting.features import build_features
 from forecasting.models import GBMForecaster, QuantileForecaster, seasonal_naive
+from forecasting.scenarios import daily_residual_blocks
 from optimizer import (
     BatteryAsset,
     MarketData,
@@ -92,20 +98,34 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\n  quantile calibration: actuals inside P10–P90 {100*cov:.0f}% of the time "
           f"(target 80%)")
 
-    rob_exp = robust_dispatch(asset, q_test, actual, dt, beta=0.0)
-    rob_rob = robust_dispatch(asset, q_test, actual, dt, beta=1.0)
+    rob_rob = robust_dispatch(asset, q_test, actual, dt, beta=1.0)  # marginal-quantile (naive)
 
     def _risk(res):
         p = np.array(res["daily_pnl"])
         return res["net"] * ann, p.std(), p.min()
 
+    # Joint scenarios: error day-shapes from an out-of-sample validation slice.
+    val_cut = cutoff - pd.Timedelta(days=90)
+    tr2 = X.index < val_cut
+    val = (X.index >= val_cut) & (X.index < cutoff)
+    val_pred = GBMForecaster().fit(X[tr2], y[tr2]).predict(X[val])
+    blocks = daily_residual_blocks(y[val], val_pred, steps=int(round(24 / dt)))
+    sc_exp = scenario_robust_dispatch(asset, gbm_pred, blocks, actual, dt, beta=0.0)
+    sc_rob = scenario_robust_dispatch(asset, gbm_pred, blocks, actual, dt, beta=1.0)
+
     print(f"\n  robust dispatch — risk vs return ({data.currency}):")
-    print(f"    {'strategy':24}{'net/MW/yr':>12}{'daily σ':>10}{'worst day':>11}")
-    for label, res in [("point forecast", fc),
-                       ("robust β=0 (expected)", rob_exp),
-                       ("robust β=1 (max-min)", rob_rob)]:
+    print(f"    {'strategy':30}{'net/MW/yr':>12}{'daily σ':>10}{'worst day':>11}")
+    rows = [
+        ("point forecast", fc),
+        ("marginal-quantile  β=1", rob_rob),
+        (f"joint-scenario ({blocks.shape[0]}d)  β=0", sc_exp),
+        (f"joint-scenario ({blocks.shape[0]}d)  β=1", sc_rob),
+    ]
+    for label, res in rows:
         a, s, w = _risk(res)
-        print(f"    {label:24}{a:>12,.0f}{s:>10,.0f}{w:>11,.0f}")
+        print(f"    {label:30}{a:>12,.0f}{s:>10,.0f}{w:>11,.0f}")
+    print("\n  (marginal = independent per-hour quantiles glued together;")
+    print("   joint = whole-day error shapes → realistic, correlated scenarios)")
     return 0
 
 

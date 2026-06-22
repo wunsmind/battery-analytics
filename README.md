@@ -58,11 +58,15 @@ forecast-driven (realistic), perfect foresight (ceiling). On SE_3/SE_4 the GBM i
 ~31% better than seasonal-naive and captures ~67–70% of the perfect-foresight
 arbitrage value.
 
-There's also a **probabilistic** path: `QuantileForecaster` (P10/P50/P90) and a
-risk-aware `robust_dispatch` (scenario LP with a β knob from expected-value to
-max-min). It runs, but currently reveals the quantile band is under-calibrated and
-that marginal-quantile scenarios are too crude for a clean robustness win — the
-next step is joint scenario generation + conformal calibration (see ROADMAP).
+There's also a **probabilistic** path: `QuantileForecaster` (P10/P50/P90) plus
+risk-aware dispatch over marginal (`robust_dispatch`) and joint error-shape
+(`scenario_robust_dispatch`) scenarios, with a β knob from expected-value to
+max-min. Backtests give a clean, theory-consistent result: **β=0 (expected) ≈ the
+point forecast, and β=1 (max-min) only sacrifices return** — i.e. risk-averse
+dispatch has no value for *pure arbitrage* (re-decided daily, no delivery penalty).
+This machinery is parked for the **reserve phase** (FCR/aFRR/mFRR), where
+under-delivery is penalized. The real arbitrage lever is forecast *accuracy*
+(weather features, next).
 
 ### ENTSO-E deep history (wholesale zone prices)
 

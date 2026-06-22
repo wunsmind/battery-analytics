@@ -10,7 +10,13 @@ on the actual. Modules:
 
 from .features import build_features
 from .models import GBMForecaster, QuantileForecaster, seasonal_naive
-from .backtest import forecast_driven_dispatch, metrics, robust_dispatch
+from .backtest import (
+    forecast_driven_dispatch,
+    metrics,
+    robust_dispatch,
+    scenario_robust_dispatch,
+)
+from .scenarios import daily_residual_blocks, sample_scenarios
 
 __all__ = [
     "build_features",
@@ -19,5 +25,8 @@ __all__ = [
     "seasonal_naive",
     "forecast_driven_dispatch",
     "robust_dispatch",
+    "scenario_robust_dispatch",
+    "daily_residual_blocks",
+    "sample_scenarios",
     "metrics",
 ]

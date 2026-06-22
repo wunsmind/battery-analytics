@@ -14,6 +14,7 @@ import pandas as pd
 
 from optimizer.assets import BatteryAsset
 from optimizer.milp import _solve_window, _solve_window_robust
+from .scenarios import sample_scenarios
 
 
 def metrics(y_true: pd.Series, y_pred: pd.Series) -> dict[str, float]:
@@ -64,6 +65,60 @@ def forecast_driven_dispatch(
         throughput += win_thru
         daily_pnl.append(win_arb - c_deg * win_thru)
         soc = soc_after[-1] + c[-1] * dt * eff - d[-1] * dt / eff
+
+    deg = asset.degradation.cost_for_throughput(throughput)
+    return {
+        "arbitrage": realized_arb,
+        "degradation": deg,
+        "net": realized_arb - deg,
+        "throughput_mwh": throughput,
+        "daily_pnl": daily_pnl,
+    }
+
+
+def scenario_robust_dispatch(
+    asset: BatteryAsset,
+    point_forecast: pd.Series,
+    blocks: np.ndarray,
+    actual: pd.Series,
+    dt: float,
+    n_scenarios: int = 20,
+    beta: float = 0.5,
+    window_hours: int = 24,
+    rng_seed: int = 0,
+) -> dict[str, float]:
+    """Risk-aware dispatch over JOINT scenarios (point forecast + sampled error
+    day-shapes). beta tunes expected↔max-min. Decide on scenarios, settle on actual.
+    """
+    pf, actual = point_forecast.align(actual, join="inner")
+    eff = asset.one_way_efficiency
+    soc_lo, soc_hi = asset.soc_bounds_mwh()
+    c_deg = asset.degradation.marginal_cost_per_mwh()
+    steps = max(1, int(round(window_hours / dt)))
+    rng = np.random.default_rng(rng_seed)
+
+    soc = asset.energy_capacity_mwh * asset.initial_soc_frac
+    pvals = pf.to_numpy(dtype=float)
+    avals = actual.to_numpy(dtype=float)
+    realized_arb = 0.0
+    throughput = 0.0
+    daily_pnl: list[float] = []
+
+    for i in range(0, len(pvals), steps):
+        point_window = pvals[i:i + steps]
+        scenarios = sample_scenarios(point_window, blocks, n_scenarios, rng)
+        weights = [1.0 / len(scenarios)] * len(scenarios)
+        cc, dd, soc_after = _solve_window_robust(
+            scenarios, weights, dt, asset.charge_power_mw, asset.discharge_power_mw,
+            eff, soc_lo, soc_hi, soc, c_deg, beta,
+        )
+        aw = avals[i:i + steps]
+        win_arb = sum(aw[t] * dt * (dd[t] - cc[t]) for t in range(len(cc)))
+        win_thru = sum(dd[t] * dt / eff for t in range(len(cc)))
+        realized_arb += win_arb
+        throughput += win_thru
+        daily_pnl.append(win_arb - c_deg * win_thru)
+        soc = soc_after[-1] + cc[-1] * dt * eff - dd[-1] * dt / eff
 
     deg = asset.degradation.cost_for_throughput(throughput)
     return {
