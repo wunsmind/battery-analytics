@@ -120,7 +120,25 @@ The realism layer. Parameterized so any pack (CATL LFP today, anything later) is
   window-chunked for long horizons. Beats the baseline ~200–350% on SE_3/SE_4.
 - ✅ **Perfect-foresight backtest** (`optimizer/backtest.py`) over zone history
   (11 yr in ~11 s). LP = upper bound; real forecast-driven dispatch lands lower.
-- ⬜ **Rolling-horizon / MPC** dispatch driven by Phase-1 forecasts
+- ✅ **Rolling-horizon / MPC** dispatch (`forecasting/mpc.py`): at each daily gate,
+  forecast a longer lookahead (48h), LP-optimize from realized SoC, **commit only
+  the first 24h**, settle on actual, roll SoC, re-plan. The committed day forecasts
+  from realized lags (honest — the prior day is cleared at the gate); the lookahead
+  *beyond* tomorrow is a **recursive** forecast (the model's day-D predictions feed
+  day-(D+1)'s same-hour lags). **Finding:** rolling-horizon lookahead **does not pay
+  for daily arbitrage** — SE_4 −0.5%, SE_3 −0.3% vs the fixed 24h-window dispatch.
+  Reason: a 2 MWh/1 MW (2-hour) battery runs ~one cycle/day and the optimal pattern
+  returns to a similar SoC each midnight, so the 24h boundary was never binding;
+  seeing past it adds nothing while the noisier recursive far-horizon forecast costs
+  a hair. Same shape as the parked robust-dispatch result — the controller is correct
+  architecture, the lookahead just has no value *at 2-hour duration*. **Verified
+  crossover by duration** (SE_4, same model, varying capacity at 1 MW): 2h −1.6%,
+  4h −1.4%, **8h +6.7%** — lookahead flips positive once storage is long enough that
+  multi-day spreads bind and seeing past midnight outweighs the recursive far-horizon
+  forecast noise. So the value of MPC is a function of duration; it also returns under
+  (a) intraday re-optimization with fresh forecasts and (b) reserve commitments that
+  couple SoC across days. Machinery built + tested; **use it for 8h+ assets**, keep
+  the simpler 24h-window dispatch for 2h arbitrage.
 - ⬜ **Robust/stochastic** optimization for forecast *and* SoC uncertainty
   (SoC buffers so commitments are deliverable even when the estimate is off)
 - ⬜ **Backtesting engine**: simulate strategies on history → P&L, cycles,
