@@ -79,6 +79,55 @@ def _solve_window(
     return charge, discharge, soc_after, arb
 
 
+def _solve_window_robust(
+    scenarios: list[list[float]],
+    weights: list[float],
+    dt: float,
+    p_chg: float,
+    p_dis: float,
+    eff: float,
+    soc_lo: float,
+    soc_hi: float,
+    soc_start: float,
+    c_deg: float,
+    beta: float,
+) -> tuple[list[float], list[float], list[float]]:
+    """Risk-aware LP: pick ONE schedule good across price scenarios.
+
+    Objective: maximize (1−β)·E[profit] + β·worst-case profit, where worst-case is
+    a max-min term (z ≤ profit_s for every scenario s). β=0 → expected-value
+    (≈ point forecast); β=1 → fully robust max-min. Scenarios are the per-hour
+    quantile paths (a marginal-quantile approximation of joint price paths).
+    """
+    n = len(scenarios[0])
+    S = len(scenarios)
+    prob = pulp.LpProblem("robust_dispatch", pulp.LpMaximize)
+    c = [pulp.LpVariable(f"c{t}", lowBound=0, upBound=p_chg) for t in range(n)]
+    d = [pulp.LpVariable(f"d{t}", lowBound=0, upBound=p_dis) for t in range(n)]
+    soc = [pulp.LpVariable(f"s{t}", lowBound=soc_lo, upBound=soc_hi) for t in range(n + 1)]
+    z = pulp.LpVariable("worst")
+
+    prob += soc[0] == soc_start
+    for t in range(n):
+        prob += soc[t + 1] == soc[t] + c[t] * dt * eff - d[t] * dt / eff
+
+    deg = pulp.lpSum(c_deg * d[t] * dt / eff for t in range(n))
+    profit = [pulp.lpSum(scenarios[s][t] * dt * (d[t] - c[t]) for t in range(n)) - deg
+              for s in range(S)]
+    for s in range(S):
+        prob += z <= profit[s]
+    expected = pulp.lpSum(weights[s] * profit[s] for s in range(S))
+    prob += (1 - beta) * expected + beta * z
+
+    status = prob.solve(pulp.PULP_CBC_CMD(msg=0))
+    if pulp.LpStatus[status] != "Optimal":
+        raise RuntimeError(f"robust LP not optimal: {pulp.LpStatus[status]}")
+    charge = [c[t].value() or 0.0 for t in range(n)]
+    discharge = [d[t].value() or 0.0 for t in range(n)]
+    soc_after = [soc[t].value() or 0.0 for t in range(n)]
+    return charge, discharge, soc_after
+
+
 class MILPDispatchOptimizer(DispatchOptimizer):
     """Perfect-foresight LP dispatch for energy arbitrage.
 

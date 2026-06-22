@@ -44,8 +44,25 @@ python app.py       # dashboard at http://127.0.0.1:8050
 python fetch_entsoe.py           # ENTSO-E zone day-ahead prices -> market.db
 python -m optimizer.example      # baseline dispatch optimizer on stored prices
 python -m optimizer.backtest     # baseline vs LP optimizer on zone history
-python -m tests.test_optimizer   # tests (also test_milp, test_pricing)
+python -m forecasting.run        # forecast + 3-way dispatch backtest
+python -m tests.test_optimizer   # tests (also test_milp, test_pricing, test_forecasting)
 ```
+
+### Forecasting (Phase 1)
+
+`forecasting/` turns the perfect-foresight optimizer into a deployable strategy:
+a gradient-boosting day-ahead forecaster (calendar + same-hour lag features, no
+leakage) and a backtest that dispatches on the *forecast* and settles on the
+*actual*. `forecasting.run` prints the three-way P&L — baseline (lower bound),
+forecast-driven (realistic), perfect foresight (ceiling). On SE_3/SE_4 the GBM is
+~31% better than seasonal-naive and captures ~67–70% of the perfect-foresight
+arbitrage value.
+
+There's also a **probabilistic** path: `QuantileForecaster` (P10/P50/P90) and a
+risk-aware `robust_dispatch` (scenario LP with a β knob from expected-value to
+max-min). It runs, but currently reveals the quantile band is under-calibrated and
+that marginal-quantile scenarios are too crude for a clean robustness win — the
+next step is joint scenario generation + conformal calibration (see ROADMAP).
 
 ### ENTSO-E deep history (wholesale zone prices)
 
