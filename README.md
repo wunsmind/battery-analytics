@@ -42,6 +42,8 @@ python backfill.py  # one-off: backfill recent history from Tibber (~31 days)
 python app.py       # dashboard at http://127.0.0.1:8050
 
 python fetch_entsoe.py           # ENTSO-E zone day-ahead prices -> market.db
+python fetch_weather.py          # Open-Meteo weather -> market.db (weather features)
+python fetch_forecasts.py        # ENTSO-E gate-aligned wind/solar/load forecasts
 python -m optimizer.example      # baseline dispatch optimizer on stored prices
 python -m optimizer.backtest     # baseline vs LP optimizer on zone history
 python -m forecasting.run        # forecast + 3-way dispatch backtest
@@ -65,8 +67,18 @@ max-min. Backtests give a clean, theory-consistent result: **β=0 (expected) ≈
 point forecast, and β=1 (max-min) only sacrifices return** — i.e. risk-averse
 dispatch has no value for *pure arbitrage* (re-decided daily, no delivery penalty).
 This machinery is parked for the **reserve phase** (FCR/aFRR/mFRR), where
-under-delivery is penalized. The real arbitrage lever is forecast *accuracy*
-(weather features, next).
+under-delivery is penalized. The real arbitrage lever is forecast *accuracy*.
+
+Two exogenous-signal sources feed that accuracy. **Weather** (`fetch_weather.py`
+→ Open-Meteo) folds temp / wind / solar / cloud / precip into `build_features`.
+**Gate-aligned ENTSO-E forecasts** (`fetch_forecasts.py` → `entsoe_forecasts.py`
+→ `zone_forecasts`) add the day-ahead wind/solar generation and load forecasts a
+trader actually has at the gate — for the target zone *and its interconnector
+neighbours* (SE_4 ← DE_LU / DK_2 / DK_1). Unlike the archived-actual weather
+proxy these carry no look-ahead, yet still lift accuracy *on top of* weather (MAE
+SE_4 −10% / SE_3 −5%; dispatch P&L SE_4 +6.1% / SE_3 +4.2%), with German solar/
+wind ranking among SE_4's top drivers — the interconnector signal point weather
+can't see. `forecasting.run` prints the lift and per-feature importance.
 
 ### ENTSO-E deep history (wholesale zone prices)
 

@@ -71,6 +71,24 @@ CREATE TABLE IF NOT EXISTS weather (
 # idempotent-guarded so older DBs upgrade in place without losing rows.
 _WEATHER_ADDED = ("solar_rad", "cloud_cover", "precip")
 
+# Gate-aligned ENTSO-E day-ahead forecasts (wind/solar generation + load), per
+# zone. Long/narrow because availability is heterogeneous — DE/DK publish wind+
+# solar, SE zones mostly just load — so a wide schema would be mostly NULLs.
+# Stored as a single forecast vintage per (zone, kind, instant): the day-ahead
+# value, what a trader has at the gate (see entsoe_forecasts). Internal data.
+FORECAST_SCHEMA = """
+CREATE TABLE IF NOT EXISTS zone_forecasts (
+    zone       TEXT NOT NULL,           -- e.g. SE_4, DE_LU, DK_2
+    starts_at  TEXT NOT NULL,           -- ISO-8601 with tz offset
+    kind       TEXT NOT NULL,           -- wind | solar | load
+    resolution TEXT NOT NULL,           -- HOURLY | QUARTER_HOURLY
+    value      REAL,                    -- forecast, MW
+    source     TEXT,                    -- e.g. entsoe
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (zone, starts_at, kind)
+);
+"""
+
 
 def _ensure_weather_columns(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(weather)")}
@@ -104,6 +122,7 @@ def connect(db_path: str):
         conn.executescript(SCHEMA)
         conn.executescript(ZONE_SCHEMA)
         conn.executescript(WEATHER_SCHEMA)
+        conn.executescript(FORECAST_SCHEMA)
         _ensure_weather_columns(conn)
         _migrate_legacy(conn)
         yield conn
@@ -234,6 +253,86 @@ def list_zone_resolutions(db_path: str) -> list[str]:
     with connect(db_path) as conn:
         rows = conn.execute(
             "SELECT DISTINCT resolution FROM zone_prices ORDER BY resolution"
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+# ---- zone forecasts (ENTSO-E wind/solar/load) ------------------------------
+
+def upsert_zone_forecasts(db_path: str, rows: Iterable[dict]) -> int:
+    """Insert/update day-ahead forecast rows. Dicts with keys:
+    zone, starts_at, kind, resolution, value, source."""
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    records = [
+        (r["zone"], r["starts_at"], r["kind"], r["resolution"],
+         r.get("value"), r.get("source"), fetched_at)
+        for r in rows
+    ]
+    if not records:
+        return 0
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO zone_forecasts
+                (zone, starts_at, kind, resolution, value, source, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(zone, starts_at, kind) DO UPDATE SET
+                resolution=excluded.resolution,
+                value=excluded.value,
+                source=excluded.source,
+                fetched_at=excluded.fetched_at;
+            """,
+            records,
+        )
+    return len(records)
+
+
+def load_zone_forecasts(
+    db_path: str, zones: Iterable[str] | None = None,
+    kinds: Iterable[str] | None = None,
+) -> pd.DataFrame:
+    """Load forecast rows (long format), parsed and sorted by time."""
+    clauses, params = [], []
+    zones = list(zones) if zones else None
+    kinds = list(kinds) if kinds else None
+    if zones:
+        clauses.append(f"zone IN ({','.join('?' * len(zones))})")
+        params.extend(zones)
+    if kinds:
+        clauses.append(f"kind IN ({','.join('?' * len(kinds))})")
+        params.extend(kinds)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    with connect(db_path) as conn:
+        df = pd.read_sql_query("SELECT * FROM zone_forecasts" + where, conn,
+                               params=tuple(params))
+    if not df.empty:
+        df["starts_at"] = pd.to_datetime(df["starts_at"], utc=True, format="ISO8601")
+        df = df.sort_values("starts_at").reset_index(drop=True)
+    return df
+
+
+def load_forecasts_wide(
+    db_path: str, zones: Iterable[str] | None = None,
+    kinds: Iterable[str] | None = None,
+) -> pd.DataFrame:
+    """Forecasts as a UTC time-indexed wide frame, columns named `{kind}_{zone}`.
+
+    The ready-to-fold exogenous frame for `build_features` — e.g. wind_DE_LU,
+    wind_DK_2, load_SE_4. Empty frame if no rows match."""
+    df = load_zone_forecasts(db_path, zones=zones, kinds=kinds)
+    if df.empty:
+        return pd.DataFrame()
+    df["col"] = df["kind"] + "_" + df["zone"]
+    wide = df.pivot_table(index="starts_at", columns="col", values="value",
+                          aggfunc="last").sort_index()
+    wide.columns.name = None
+    return wide
+
+
+def list_forecast_kinds(db_path: str) -> list[str]:
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT kind FROM zone_forecasts ORDER BY kind"
         ).fetchall()
     return [r[0] for r in rows]
 
