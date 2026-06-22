@@ -51,6 +51,11 @@ def main(argv: list[str] | None = None) -> int:
     series = data.spot_price
     dt = data.dt_hours
 
+    # Optional weather features (fetch_weather.py populates the `weather` table).
+    from store.db import load_weather  # local import to avoid a hard dep at import time
+    weather = load_weather(zone_db, zone=args.zone)
+    weather = weather.set_index("starts_at") if not weather.empty else None
+
     # Train/test split: last N days are the out-of-sample test.
     cutoff = series.index.max() - pd.Timedelta(days=args.test_days)
     X, y = build_features(series)
@@ -90,6 +95,40 @@ def main(argv: list[str] | None = None) -> int:
     print(f"    perfect  (LP/actual)         : {perfect*ann:>10,.0f}   (ceiling)")
     capture = 100 * fc["net"] / perfect if perfect else float("nan")
     print(f"  forecast captures {capture:.0f}% of the perfect-foresight ceiling.")
+
+    # Does weather pay? Train a weather-augmented GBM on the same split and report
+    # the MAE and dispatch-P&L lift vs the weather-free model above.
+    if weather is not None:
+        Xw, yw = build_features(series, weather)
+        tw, sw = Xw.index < cutoff, Xw.index >= cutoff
+        added = [c for c in Xw.columns if c not in X.columns]
+        if sw.sum() and tw.sum():
+            wmodel = GBMForecaster().fit(Xw[tw], yw[tw])
+            w_pred = wmodel.predict(Xw[sw])
+            m_w = metrics(yw[sw], w_pred)
+            w_fc = forecast_driven_dispatch(asset, w_pred, yw[sw], dt)
+            mae_lift = 100 * (1 - m_w["mae"] / m_gbm["mae"])
+            pnl_lift = 100 * (w_fc["net"] / fc["net"] - 1) if fc["net"] else float("nan")
+            print(f"\n  + weather ({len(added)} features: {', '.join(added)}):")
+            print(f"    forecast MAE  — weather {m_w['mae']:.2f} vs no-weather {m_gbm['mae']:.2f} "
+                  f"({mae_lift:+.0f}%)")
+            print(f"    dispatch net  — weather {w_fc['net']*ann:>10,.0f} vs "
+                  f"no-weather {fc['net']*ann:>10,.0f} ({pnl_lift:+.1f}%)")
+            # Which weather variables actually move price? Permutation importance =
+            # the MAE rise on the test set when each feature alone is shuffled.
+            from sklearn.inspection import permutation_importance
+            imp = permutation_importance(
+                wmodel.model, Xw[sw], yw[sw], n_repeats=5, random_state=0,
+                scoring="neg_mean_absolute_error")
+            ranked = sorted(((c, imp.importances_mean[i]) for i, c in enumerate(Xw.columns)
+                             if c in added), key=lambda kv: kv[1], reverse=True)
+            print(f"    weather feature importance (MAE rise when shuffled, {data.currency}/MWh):")
+            for name, val in ranked:
+                print(f"      {name:12}{val:6.2f}")
+        else:
+            print("\n  + weather: present but doesn't cover the test split — skipping.")
+    else:
+        print("\n  + weather: no rows in `weather` table — run fetch_weather.py to enable.")
 
     # Probabilistic forecast + robust (risk-aware) dispatch.
     qf = QuantileForecaster().fit(X[train], y[train])

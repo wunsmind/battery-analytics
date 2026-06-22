@@ -50,8 +50,21 @@ Status legend: ✅ done · 🚧 in progress · ⏳ blocked/waiting · ⬜ planne
     **risk-averse dispatch has no value for pure arbitrage** (re-decided daily, no
     delivery penalty) — the point forecast is the correct objective. This robust
     machinery is **parked for the reserve phase**, where under-delivery is penalized.
-  - ⬜ **Weather features** (Open-Meteo temp/wind, ENTSO-E wind+load) — the real
-    arbitrage lever is forecast *accuracy*. Intraday horizon; periodic retrain.
+  - ✅ **Weather features** (Open-Meteo hourly archive → `weather/openmeteo.py` →
+    `fetch_weather.py` → `weather` table) folded into `build_features` with a
+    clean weather-free fallback. Six features: temp, 100 m wind, solar radiation,
+    cloud cover, precipitation, and a 7-day rolling-precip hydro proxy. **Finding:**
+    lowers forecast MAE in both zones (SE_3 −12%, SE_4 −9%); dispatch-P&L lift is
+    flat in SE_3 (−0.4%, noise) and **+4.4% in SE_4** — accuracy only pays when it
+    sharpens the daily high/low ordering, which it does most where wind swings
+    prices hardest. **Permutation importance** (printed by `forecasting.run`)
+    ranks the drivers: wind ≫ temp > solar/cloud, and **precipitation is inert**
+    (~0 EUR/MWh) — point rainfall is not a hydro signal; hydro responds to
+    basin-wide reservoir levels over weeks. *Refinements:* (1) reservoir-level /
+    snowpack data (a slower, separate source) for the real hydro lever; (2) one
+    representative point per zone today — a load/wind-weighted multi-point average
+    would capture more; (3) cross-border weather (German/Danish wind drives SE_4
+    via interconnectors) and ENTSO-E wind+load forecasts as gate-aligned sources.
 - ✅ **Forecast-driven backtest** (`forecasting/run.py`): dispatch on forecast,
   settle on actual → realistic P&L (captures ~67–70% of the perfect-foresight
   ceiling on SE_3/SE_4), bracketed by baseline and ceiling.

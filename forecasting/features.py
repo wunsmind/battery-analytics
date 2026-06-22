@@ -5,9 +5,22 @@ calendar fields of the target time, and *same-hour lags* of 1/2/7 days plus the
 previous day's mean. Calendar fields use local (Europe/Stockholm) time so the
 model sees true daily/weekly human demand patterns.
 
-Caveat: lag-24h is a mild simplification — at the 12:00 CET day-ahead gate you
-don't yet have the full previous calendar day. The bias is small and standard in
-electricity-price-forecasting baselines; lag-48/168 are always safe.
+Optionally folds in weather for the target hour — the largest exogenous day-ahead
+drivers in the Nordics: temperature (demand), 100 m wind and solar radiation +
+cloud cover (renewable supply), and precipitation (hydro inflow). When weather is
+absent the feature set is byte-for-byte the weather-free one, so existing
+backtests and tests are unaffected.
+
+Caveats (all small and standard in electricity-price-forecasting baselines):
+  - lag-24h: at the 12:00 CET day-ahead gate you don't yet have the full previous
+    calendar day. lag-48/168 are always safe.
+  - weather: a live forecast uses *forecast* weather for the delivery day; the
+    backtest uses the archived actual as a proxy, a mild optimism. Modern weather
+    forecasts are accurate a day out, so the gap is small.
+  - precipitation: hourly rain at one point is a weak hydro signal — hydro
+    responds to basin-wide reservoir levels over weeks. We add a 7-day rolling
+    precip sum as a better inflow proxy, but reservoir levels (a slower, separate
+    data source) would be stronger; see ROADMAP.
 """
 
 from __future__ import annotations
@@ -16,10 +29,19 @@ import pandas as pd
 
 LAGS = (24, 48, 168)  # hours = same hour 1, 2, 7 days back
 LOCAL_TZ = "Europe/Stockholm"
+# Raw weather columns folded in as-is (those present in the supplied frame).
+WEATHER_COLS = ("temp_c", "wind_100m", "solar_rad", "cloud_cover", "precip")
 
 
-def build_features(series: pd.Series) -> tuple[pd.DataFrame, pd.Series]:
-    """Return (X, y) aligned and NaN-dropped for an hourly price series."""
+def build_features(
+    series: pd.Series, weather: pd.DataFrame | None = None
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Return (X, y) aligned and NaN-dropped for an hourly price series.
+
+    weather: optional time-indexed (UTC) DataFrame with temp_c / wind_100m. It is
+    reindexed to the price timestamps (interpolated across sub-hourly gaps), so it
+    works for both HOURLY and QUARTER_HOURLY series.
+    """
     s = series.astype(float).sort_index()
     idx = s.index
     local = idx.tz_convert(LOCAL_TZ) if idx.tz is not None else idx
@@ -32,6 +54,18 @@ def build_features(series: pd.Series) -> tuple[pd.DataFrame, pd.Series]:
     for lag in LAGS:
         X[f"lag{lag}"] = s.shift(lag)
     X["prevday_mean"] = s.shift(24).rolling(24).mean()
+
+    if weather is not None and not weather.empty:
+        present = [c for c in WEATHER_COLS if c in weather.columns]
+        w = weather[present].sort_index()
+        w = w[~w.index.duplicated(keep="last")]
+        aligned = w.reindex(w.index.union(idx)).interpolate("time").reindex(idx)
+        for col in present:
+            X[col] = aligned[col].ffill().bfill()
+        if "precip" in present:
+            # 7-day rolling precipitation — a better hydro-inflow proxy than the
+            # mostly-zero hourly value. Time-based window handles HOURLY & 15-min.
+            X["precip_7d"] = X["precip"].rolling("7D").sum()
 
     df = X.join(s.rename("y")).dropna()
     return df.drop(columns="y"), df["y"]
