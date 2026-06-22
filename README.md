@@ -49,8 +49,12 @@ python -m tests.test_optimizer   # optimizer sanity tests
 ### ENTSO-E deep history (wholesale zone prices)
 
 `fetch_entsoe.py` pulls day-ahead prices per bidding zone (EUR/MWh — the "pure"
-market price, vs Tibber's home consumer price) into the `zone_prices` table.
+market price, vs Tibber's home consumer price) into **`market.db`** (`ZONE_DB_PATH`).
 Needs `ENTSOE_TOKEN` in `.env`.
+
+Storage split: `prices.db` (Tibber home, small, git-tracked) vs `market.db`
+(ENTSO-E zones, large but **reproducible** via this script, so git-ignored). This
+keeps the repo small — re-run `fetch_entsoe.py` to rebuild zone history anytime.
 
 ```bash
 python fetch_entsoe.py                                  # last 30 days, SE_3 + SE_4

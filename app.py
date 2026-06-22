@@ -29,7 +29,8 @@ from store.db import (
 )
 
 load_dotenv()
-DB_PATH = os.getenv("DB_PATH", "prices.db")
+DB_PATH = os.getenv("DB_PATH", "prices.db")            # Tibber home prices (tracked)
+ZONE_DB_PATH = os.getenv("ZONE_DB_PATH", "market.db")  # ENTSO-E zones (reproducible, ignored)
 
 # Source-specific config: how to load, which column holds the price, and the unit.
 ZONE = "zone"
@@ -120,7 +121,7 @@ app.layout = html.Div(
 )
 def _populate_series(source, _n, current):
     if source == ZONE:
-        items = list_zones(DB_PATH)
+        items = list_zones(ZONE_DB_PATH)
         # Prefer SE_3 (Stockholm) as a sensible default if present.
         default = "SE_3" if "SE_3" in items else (items[0] if items else None)
     else:
@@ -139,7 +140,7 @@ def _populate_series(source, _n, current):
     Input("resolution", "value"),
 )
 def _populate_resolutions(source, _n, current):
-    res = (list_zone_resolutions(DB_PATH) if source == ZONE else list_resolutions(DB_PATH))
+    res = (list_zone_resolutions(ZONE_DB_PATH) if source == ZONE else list_resolutions(DB_PATH))
     res = res or ["HOURLY"]
     options = [{"label": r.replace("_", "-").title(), "value": r} for r in res]
     value = current if current in res else res[0]
@@ -176,7 +177,7 @@ def _update(source, series, metric, resolution, _n):
         return empty, empty, [_kpi_card("Status", "no data")]
 
     if source == ZONE:
-        df = load_zone_prices(DB_PATH, zone=series, resolution=resolution)
+        df = load_zone_prices(ZONE_DB_PATH, zone=series, resolution=resolution)
         col, unit, title = "price", "EUR/MWh", f"{series} day-ahead"
         fmt = "{:,.1f}"
     else:

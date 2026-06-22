@@ -39,7 +39,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     load_dotenv()
     token = os.getenv("ENTSOE_TOKEN")
-    db_path = os.getenv("DB_PATH", "prices.db")
+    # ENTSO-E history is large but fully reproducible, so it lives in a separate,
+    # git-ignored DB (default market.db) — keeping the tracked prices.db small.
+    db_path = os.getenv("ZONE_DB_PATH", "market.db")
 
     if not token or token == "your-entsoe-token-here":
         print("ERROR: set ENTSOE_TOKEN in .env (see .env.example).", file=sys.stderr)
