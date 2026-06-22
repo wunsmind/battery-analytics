@@ -153,3 +153,31 @@ class MarketData:
             spot_price=spot,
             currency=currency,
         )
+
+    @classmethod
+    def from_zone_prices(
+        cls,
+        db_path: str,
+        zone: str,
+        resolution: str = "HOURLY",
+    ) -> "MarketData":
+        """Build spot MarketData from ENTSO-E zone day-ahead prices.
+
+        Already currency/MWh wholesale (no kWh conversion) — the right input for
+        SE3/SE4 arbitrage backtests, vs Tibber's home consumer price.
+        """
+        from store.db import load_zone_prices  # local import to avoid cycles
+
+        df = load_zone_prices(db_path, zone=zone, resolution=resolution)
+        if df.empty:
+            raise ValueError(f"No zone prices for {zone}/{resolution} — run fetch_entsoe.py.")
+        df = df.set_index("starts_at")
+        spot = df["price"].astype(float)
+        currency = str(df["currency"].dropna().iloc[0]) if df["currency"].notna().any() else "EUR"
+        res_minutes = 15 if resolution.upper() == "QUARTER_HOURLY" else 60
+        return cls(
+            index=spot.index,
+            resolution_minutes=res_minutes,
+            spot_price=spot,
+            currency=currency,
+        )

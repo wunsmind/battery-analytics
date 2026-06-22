@@ -41,9 +41,24 @@ python fetch.py     # pull today+tomorrow (HOURLY + QUARTER_HOURLY) — run dail
 python backfill.py  # one-off: backfill recent history from Tibber (~31 days)
 python app.py       # dashboard at http://127.0.0.1:8050
 
+python fetch_entsoe.py           # ENTSO-E zone day-ahead prices -> zone_prices
 python -m optimizer.example      # baseline dispatch optimizer on stored prices
 python -m tests.test_optimizer   # optimizer sanity tests
 ```
+
+### ENTSO-E deep history (wholesale zone prices)
+
+`fetch_entsoe.py` pulls day-ahead prices per bidding zone (EUR/MWh — the "pure"
+market price, vs Tibber's home consumer price) into the `zone_prices` table.
+Needs `ENTSOE_TOKEN` in `.env`.
+
+```bash
+python fetch_entsoe.py                                  # last 30 days, SE_3 + SE_4
+python fetch_entsoe.py --start 2015-01-05 --zones SE_1 SE_2 SE_3 SE_4   # deep backfill
+```
+
+15-minute since 2025-10-01, hourly before (tagged per row). Backtest on it via
+`MarketData.from_zone_prices(db, "SE_4", "QUARTER_HOURLY")`.
 
 The `optimizer/` package scaffolds the dispatch layer (see [ROADMAP.md](ROADMAP.md)
 Phase 2–3): `BatteryAsset` + degradation cost model, a `Product`/`MarketData`

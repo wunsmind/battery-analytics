@@ -3,3 +3,4 @@ plotly>=5.22
 pandas>=2.2
 requests>=2.31
 python-dotenv>=1.0
+entsoe-py>=0.6

@@ -114,6 +114,11 @@ class ThresholdArbitrageOptimizer(DispatchOptimizer):
         *,
         soc_uncertainty_frac: float = 0.0,
     ) -> DispatchResult:
+        if asset.currency != data.currency:
+            raise ValueError(
+                f"currency mismatch: asset is {asset.currency} but market data is "
+                f"{data.currency}. Use a matching asset (FX conversion is not yet modelled)."
+            )
         prices = data.spot_price
         dt = data.dt_hours
         eff = asset.one_way_efficiency

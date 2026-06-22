@@ -33,6 +33,22 @@ CREATE TABLE IF NOT EXISTS prices (
 );
 """
 
+# Bidding-zone wholesale prices (ENTSO-E day-ahead). Separate from `prices`
+# because these are zone-level market prices (EUR/MWh), not a home's consumer
+# price — and they're internal market data (see data-licensing memory).
+ZONE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS zone_prices (
+    zone       TEXT NOT NULL,           -- e.g. SE_3
+    starts_at  TEXT NOT NULL,           -- ISO-8601 with tz offset
+    resolution TEXT NOT NULL,           -- HOURLY | QUARTER_HOURLY
+    price      REAL,                    -- day-ahead price, currency/MWh
+    currency   TEXT,                    -- e.g. EUR
+    source     TEXT,                    -- e.g. entsoe
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (zone, starts_at, resolution)
+);
+"""
+
 # Legacy table (pre resolution column) -> migrate into `prices`, tagged HOURLY.
 MIGRATE = """
 INSERT OR IGNORE INTO prices
@@ -57,6 +73,7 @@ def connect(db_path: str):
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.executescript(SCHEMA)
+        conn.executescript(ZONE_SCHEMA)
         _migrate_legacy(conn)
         yield conn
         conn.commit()
@@ -124,4 +141,59 @@ def list_resolutions(db_path: str) -> list[str]:
         rows = conn.execute(
             "SELECT DISTINCT resolution FROM prices ORDER BY resolution"
         ).fetchall()
+    return [r[0] for r in rows]
+
+
+# ---- zone prices (ENTSO-E) -------------------------------------------------
+
+def upsert_zone_prices(db_path: str, rows: Iterable[dict]) -> int:
+    """Insert/update zone day-ahead prices. Rows are dicts with keys:
+    zone, starts_at, resolution, price, currency, source."""
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    records = [
+        (r["zone"], r["starts_at"], r["resolution"], r.get("price"),
+         r.get("currency"), r.get("source"), fetched_at)
+        for r in rows
+    ]
+    if not records:
+        return 0
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO zone_prices
+                (zone, starts_at, resolution, price, currency, source, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(zone, starts_at, resolution) DO UPDATE SET
+                price=excluded.price,
+                currency=excluded.currency,
+                source=excluded.source,
+                fetched_at=excluded.fetched_at;
+            """,
+            records,
+        )
+    return len(records)
+
+
+def load_zone_prices(
+    db_path: str, zone: str | None = None, resolution: str | None = None
+) -> pd.DataFrame:
+    clauses, params = [], []
+    if zone:
+        clauses.append("zone = ?")
+        params.append(zone)
+    if resolution:
+        clauses.append("resolution = ?")
+        params.append(resolution)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    with connect(db_path) as conn:
+        df = pd.read_sql_query("SELECT * FROM zone_prices" + where, conn, params=tuple(params))
+    if not df.empty:
+        df["starts_at"] = pd.to_datetime(df["starts_at"], utc=True, format="ISO8601")
+        df = df.sort_values("starts_at").reset_index(drop=True)
+    return df
+
+
+def list_zones(db_path: str) -> list[str]:
+    with connect(db_path) as conn:
+        rows = conn.execute("SELECT DISTINCT zone FROM zone_prices ORDER BY zone").fetchall()
     return [r[0] for r in rows]

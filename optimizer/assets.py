@@ -59,7 +59,7 @@ class BatteryAsset:
 
     # ---- factory ---------------------------------------------------------
     @classmethod
-    def example_catl_lfp(cls) -> "BatteryAsset":
+    def example_catl_lfp(cls, currency: str = "EUR") -> "BatteryAsset":
         """A 1 MW / 2 MWh CATL-LFP-style asset. NUMBERS ARE ILLUSTRATIVE.
 
         Verify against the real datasheet before any economic conclusion:
@@ -69,22 +69,26 @@ class BatteryAsset:
           usable ≈ 2.0 MWh × (1.00-0.05) = 1.9 MWh
           cycle life to EoL ≈ 6,000 cycles
           lifetime discharge throughput ≈ 1.9 × 6,000 ≈ 11,400 MWh
-          pack cost ≈ 2,280,000 SEK  →  marginal ≈ 200 SEK/MWh (~€18/MWh)
+          marginal ≈ 18 EUR/MWh (≈ 200 SEK/MWh) → pack_cost = marginal × lifetime
+
+        `currency` must match the market data it's run against (EUR for ENTSO-E
+        zone prices, SEK for Tibber home prices) — the optimizer enforces this.
         """
         usable = 2.0 * (1.0 - 0.05)
         cycle_life = 6_000
         lifetime_throughput = usable * cycle_life
+        marginal_per_mwh = {"EUR": 18.0, "SEK": 200.0}.get(currency.upper(), 18.0)
         return cls(
-            name="CATL LFP 1MW/2MWh (illustrative)",
+            name=f"CATL LFP 1MW/2MWh (illustrative, {currency.upper()})",
             energy_capacity_mwh=2.0,
             power_max_mw=1.0,
             round_trip_efficiency=0.92,
             soc_min_frac=0.05,
             soc_max_frac=1.0,
             degradation=ThroughputDegradationModel(
-                pack_cost=2_280_000.0,
+                pack_cost=marginal_per_mwh * lifetime_throughput,
                 lifetime_throughput_mwh=lifetime_throughput,
             ),
             warranty_throughput_mwh=lifetime_throughput,
-            currency="SEK",
+            currency=currency.upper(),
         )

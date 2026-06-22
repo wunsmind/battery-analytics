@@ -30,8 +30,10 @@ Status legend: ✅ done · 🚧 in progress · ⏳ blocked/waiting · ⬜ planne
 - ✅ Tibber ~31-day backfill via `priceInfoRange`
 - ✅ Daily cloud cron (GitHub Actions) committing data back
 - ✅ Dual-resolution schema; Dash dashboard (price curve + daily arbitrage spread)
-- ⏳ **ENTSO-E ingester** — deep history (back to 2015), all SE/NO/DK/FI/Baltic
-  bidding zones. *Blocked on API token (requested).* `entsoe-py`.
+- ✅ **ENTSO-E ingester** (`entsoe_ingest.py`, `fetch_entsoe.py`) — day-ahead
+  per bidding zone (EUR/MWh) into `zone_prices`; 15-min since Oct-2025 / hourly
+  before, tagged per row; backfillable to 2015; `MarketData.from_zone_prices`
+  feeds the optimizer. Backtested on SE_3/SE_4.
 
 ## Phase 1 — Price intelligence ⬜
 

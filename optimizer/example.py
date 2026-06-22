@@ -21,7 +21,7 @@ def main() -> int:
     db_path = os.getenv("DB_PATH", "prices.db")
 
     data = MarketData.from_prices_db(db_path, resolution="HOURLY", metric="energy")
-    asset = BatteryAsset.example_catl_lfp()
+    asset = BatteryAsset.example_catl_lfp(currency=data.currency)
     optimizer = ThresholdArbitrageOptimizer(charge_pct=25, discharge_pct=75)
 
     result = optimizer.optimize(asset, data)
