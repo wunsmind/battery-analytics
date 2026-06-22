@@ -43,13 +43,15 @@ Status legend: ✅ done · 🚧 in progress · ⏳ blocked/waiting · ⬜ planne
 - 🚧 **Price forecasting** — day-ahead (`forecasting/`):
   - ✅ Seasonal-naive baseline + gradient-boosting forecaster (calendar +
     same-hour lag features, no leakage). ~31% better MAE than naive on SE_3/SE_4.
-  - 🚧 **Probabilistic** forecasts: `QuantileForecaster` (P10/P50/P90) + risk-aware
-    `robust_dispatch` (scenario LP, β expected↔max-min). Works, but reveals the
-    quantile band is under-calibrated (~65% vs 80%) and marginal-quantile
-    "scenarios" are too crude → robust cuts variance at a return cost without
-    improving worst-case. Next: **joint scenario generation** (bootstrapped
-    residual paths) + **conformal calibration**.
-  - ⬜ Weather features (Open-Meteo / ENTSO-E wind+load); intraday; periodic retrain
+  - ✅ **Probabilistic** forecasts: `QuantileForecaster` (P10/P50/P90) + risk-aware
+    `robust_dispatch` (marginal) and `scenario_robust_dispatch` (joint error-shape
+    scenarios). **Finding:** β=0 (expected) ≈ point forecast (as theory predicts);
+    β=1 (max-min) costs return without improving realized worst-case. Conclusion:
+    **risk-averse dispatch has no value for pure arbitrage** (re-decided daily, no
+    delivery penalty) — the point forecast is the correct objective. This robust
+    machinery is **parked for the reserve phase**, where under-delivery is penalized.
+  - ⬜ **Weather features** (Open-Meteo temp/wind, ENTSO-E wind+load) — the real
+    arbitrage lever is forecast *accuracy*. Intraday horizon; periodic retrain.
 - ✅ **Forecast-driven backtest** (`forecasting/run.py`): dispatch on forecast,
   settle on actual → realistic P&L (captures ~67–70% of the perfect-foresight
   ceiling on SE_3/SE_4), bracketed by baseline and ceiling.

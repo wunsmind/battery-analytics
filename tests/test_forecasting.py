@@ -92,6 +92,27 @@ def test_robust_equals_point_when_no_uncertainty():
     assert abs(point - rob) < 1e-6
 
 
+def test_residual_blocks_shape():
+    s = _series(24 * 10)
+    pred = s + 5.0
+    from forecasting.scenarios import daily_residual_blocks
+    blocks = daily_residual_blocks(s, pred, steps=24)
+    assert blocks.shape == (10, 24)
+    assert np.allclose(blocks, -5.0)  # residual = actual - pred = -5 everywhere
+
+
+def test_scenario_robust_equals_point_with_zero_error_blocks():
+    # Zero-residual blocks -> every scenario equals the point forecast.
+    from forecasting.backtest import scenario_robust_dispatch
+    s = _series(24 * 14)
+    asset = _eur_asset()
+    fcast = s + np.random.default_rng(3).normal(0, 12, len(s))
+    blocks = np.zeros((30, 24))
+    point = forecast_driven_dispatch(asset, fcast, s, dt=1.0)["net"]
+    rob = scenario_robust_dispatch(asset, fcast, blocks, s, dt=1.0, n_scenarios=10, beta=1.0)["net"]
+    assert abs(point - rob) < 1e-6
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
