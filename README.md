@@ -41,9 +41,10 @@ python fetch.py     # pull today+tomorrow (HOURLY + QUARTER_HOURLY) — run dail
 python backfill.py  # one-off: backfill recent history from Tibber (~31 days)
 python app.py       # dashboard at http://127.0.0.1:8050
 
-python fetch_entsoe.py           # ENTSO-E zone day-ahead prices -> zone_prices
+python fetch_entsoe.py           # ENTSO-E zone day-ahead prices -> market.db
 python -m optimizer.example      # baseline dispatch optimizer on stored prices
-python -m tests.test_optimizer   # optimizer sanity tests
+python -m optimizer.backtest     # baseline vs LP optimizer on zone history
+python -m tests.test_optimizer   # tests (also test_milp, test_pricing)
 ```
 
 ### ENTSO-E deep history (wholesale zone prices)
@@ -64,11 +65,17 @@ python fetch_entsoe.py --start 2015-01-05 --zones SE_1 SE_2 SE_3 SE_4   # deep b
 15-minute since 2025-10-01, hourly before (tagged per row). Backtest on it via
 `MarketData.from_zone_prices(db, "SE_4", "QUARTER_HOURLY")`.
 
-The `optimizer/` package scaffolds the dispatch layer (see [ROADMAP.md](ROADMAP.md)
+The `optimizer/` package implements the dispatch layer (see [ROADMAP.md](ROADMAP.md)
 Phase 2–3): `BatteryAsset` + degradation cost model, a `Product`/`MarketData`
-catalogue (energy + FCR/FFR/aFRR/mFRR, with aFRR pre-defined but gated off until
-SvK joins PICASSO), and a `DispatchOptimizer` interface with a naive spot-only
-baseline. The revenue-stacking MILP fills this in later.
+catalogue (energy + FCR/FFR/aFRR/mFRR, aFRR gated off until SvK joins PICASSO),
+and two optimizers behind one `DispatchOptimizer` interface:
+- `ThresholdArbitrageOptimizer` — naive spot-only baseline (lower bound)
+- `MILPDispatchOptimizer` — perfect-foresight LP maximizing
+  `arbitrage − degradation − efficiency losses` under SoC/power constraints,
+  chunked into windows for long horizons (`optimizer/milp.py`)
+
+`optimizer/backtest.py` compares them on real zone history. Reserve
+(FCR/aFRR/mFRR) revenue stacking is the next extension to the LP.
 
 `fetch.py` captures **both** resolutions each run. Quarter-hourly is the native
 market unit (15-min since 2025-10-01) and Tibber only serves it for ~7 days, so

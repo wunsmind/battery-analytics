@@ -67,12 +67,14 @@ The realism layer. Parameterized so any pack (CATL LFP today, anything later) is
 
 ## Phase 3 — Dispatch optimization ⬜
 
-- 🚧 **Optimizer interface + naive baseline** scaffolded (`optimizer/dispatch.py`):
-  `DispatchOptimizer` contract, `RevenueBreakdown`, and a spot-only
-  `ThresholdArbitrageOptimizer` lower bound that runs on real `prices.db`.
-- ⬜ **MILP arbitrage optimizer** (PuLP/Pyomo/cvxpy or OR-Tools): maximize
-  `revenue − degradation − efficiency losses` s.t. SoC, power, warranty constraints
-- ⬜ Perfect-foresight backtest (upper bound on achievable P&L)
+- ✅ **Optimizer interface + naive baseline** (`optimizer/dispatch.py`):
+  `DispatchOptimizer` contract, `RevenueBreakdown`, spot-only
+  `ThresholdArbitrageOptimizer` lower bound.
+- ✅ **LP arbitrage optimizer** (`optimizer/milp.py`, PuLP/CBC): maximizes
+  `arbitrage − degradation − efficiency losses` s.t. SoC/power constraints;
+  window-chunked for long horizons. Beats the baseline ~200–350% on SE_3/SE_4.
+- ✅ **Perfect-foresight backtest** (`optimizer/backtest.py`) over zone history
+  (11 yr in ~11 s). LP = upper bound; real forecast-driven dispatch lands lower.
 - ⬜ **Rolling-horizon / MPC** dispatch driven by Phase-1 forecasts
 - ⬜ **Robust/stochastic** optimization for forecast *and* SoC uncertainty
   (SoC buffers so commitments are deliverable even when the estimate is off)
