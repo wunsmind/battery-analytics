@@ -37,7 +37,10 @@ from entsoe_ingest import _resolution_tag
 # little (almost no wind, weakly coupled), so the defaults target SE_3/SE_4 and
 # their interconnector neighbours.
 WIND_SOLAR_ZONES = ["DE_LU", "DK_1", "DK_2", "SE_3", "SE_4"]
-LOAD_ZONES = ["SE_3", "SE_4"]
+# Load forecast for the target zones *and* their interconnector neighbours —
+# foreign demand pulls power out of SE_4/SE_3 across the cables, so it's a price
+# driver too (importance ranks own-load high; cross-border load rounds it out).
+LOAD_ZONES = ["SE_3", "SE_4", "DE_LU", "DK_1", "DK_2"]
 
 # ENTSO-E generation/load forecasts are mandated from 2015, but coverage by zone
 # only firms up around 2016; callers chunk and skip gaps, so this is just a floor.

@@ -37,10 +37,12 @@ TZ = "Europe/Stockholm"
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Backfill ENTSO-E day-ahead forecasts.")
-    p.add_argument("--wind-zones", nargs="+", default=WIND_SOLAR_ZONES,
-                   help=f"Zones for wind/solar forecast (default: {' '.join(WIND_SOLAR_ZONES)})")
-    p.add_argument("--load-zones", nargs="+", default=LOAD_ZONES,
-                   help=f"Zones for load forecast (default: {' '.join(LOAD_ZONES)})")
+    p.add_argument("--wind-zones", nargs="*", default=WIND_SOLAR_ZONES,
+                   help=f"Zones for wind/solar forecast (default: {' '.join(WIND_SOLAR_ZONES)}; "
+                        "pass with no values to skip)")
+    p.add_argument("--load-zones", nargs="*", default=LOAD_ZONES,
+                   help=f"Zones for load forecast (default: {' '.join(LOAD_ZONES)}; "
+                        "pass with no values to skip)")
     p.add_argument("--start", help="ISO date, e.g. 2023-01-01 (default: 30 days ago)")
     p.add_argument("--end", help="ISO date (default: now)")
     return p.parse_args(argv)

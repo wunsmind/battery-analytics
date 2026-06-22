@@ -73,12 +73,14 @@ Two exogenous-signal sources feed that accuracy. **Weather** (`fetch_weather.py`
 → Open-Meteo) folds temp / wind / solar / cloud / precip into `build_features`.
 **Gate-aligned ENTSO-E forecasts** (`fetch_forecasts.py` → `entsoe_forecasts.py`
 → `zone_forecasts`) add the day-ahead wind/solar generation and load forecasts a
-trader actually has at the gate — for the target zone *and its interconnector
-neighbours* (SE_4 ← DE_LU / DK_2 / DK_1). Unlike the archived-actual weather
-proxy these carry no look-ahead, yet still lift accuracy *on top of* weather (MAE
-SE_4 −10% / SE_3 −5%; dispatch P&L SE_4 +6.1% / SE_3 +4.2%), with German solar/
-wind ranking among SE_4's top drivers — the interconnector signal point weather
-can't see. `forecasting.run` prints the lift and per-feature importance.
+trader actually has at the gate — generation *and* load, for the target zone *and
+its interconnector neighbours* (SE_4 ← DE_LU / DK_2 / DK_1). Unlike the
+archived-actual weather proxy these carry no look-ahead, yet still lift accuracy
+*on top of* weather (MAE SE_4 −11% / SE_3 −5%; dispatch P&L SE_4 +10.7% / SE_3
++6.4%), with German solar, wind **and demand** ranking among SE_4's top drivers —
+the interconnector signal point weather can't see (German wind floods power into
+SE_4, German demand pulls it out). `forecasting.run` prints the lift and
+per-feature importance.
 
 ### ENTSO-E deep history (wholesale zone prices)
 
