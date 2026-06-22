@@ -44,8 +44,19 @@ python app.py       # dashboard at http://127.0.0.1:8050
 python fetch_entsoe.py           # ENTSO-E zone day-ahead prices -> market.db
 python -m optimizer.example      # baseline dispatch optimizer on stored prices
 python -m optimizer.backtest     # baseline vs LP optimizer on zone history
-python -m tests.test_optimizer   # tests (also test_milp, test_pricing)
+python -m forecasting.run        # forecast + 3-way dispatch backtest
+python -m tests.test_optimizer   # tests (also test_milp, test_pricing, test_forecasting)
 ```
+
+### Forecasting (Phase 1)
+
+`forecasting/` turns the perfect-foresight optimizer into a deployable strategy:
+a gradient-boosting day-ahead forecaster (calendar + same-hour lag features, no
+leakage) and a backtest that dispatches on the *forecast* and settles on the
+*actual*. `forecasting.run` prints the three-way P&L — baseline (lower bound),
+forecast-driven (realistic), perfect foresight (ceiling). On SE_3/SE_4 the GBM is
+~31% better than seasonal-naive and captures ~67–70% of the perfect-foresight
+arbitrage value.
 
 ### ENTSO-E deep history (wholesale zone prices)
 

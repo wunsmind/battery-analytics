@@ -40,11 +40,14 @@ Status legend: ✅ done · 🚧 in progress · ⏳ blocked/waiting · ⬜ planne
 - ⬜ Migrate storage to **TimescaleDB/Postgres** when scale/queries demand it
 - ⬜ Exploratory analytics: spread distributions, volatility, seasonality,
   intraday shape, zone-vs-zone differentials
-- ⬜ **Price forecasting** — day-ahead first, then intraday:
-  - Baselines (naive, seasonal) → statistical (SARIMAX, gradient boosting) → ML
-  - Output **probabilistic** forecasts (quantiles), not point estimates — the
-    optimizer needs uncertainty
-- ⬜ Forecast backtesting + accuracy tracking (pinball loss, MAE by horizon)
+- 🚧 **Price forecasting** — day-ahead (`forecasting/`):
+  - ✅ Seasonal-naive baseline + gradient-boosting forecaster (calendar +
+    same-hour lag features, no leakage). ~31% better MAE than naive on SE_3/SE_4.
+  - ⬜ **Probabilistic** forecasts (quantiles) for robust/stochastic dispatch
+  - ⬜ Weather features; intraday horizon; periodic retrain
+- ✅ **Forecast-driven backtest** (`forecasting/run.py`): dispatch on forecast,
+  settle on actual → realistic P&L (captures ~67–70% of the perfect-foresight
+  ceiling on SE_3/SE_4), bracketed by baseline and ceiling.
 
 ## Phase 2 — Battery asset model & economics ⬜
 
