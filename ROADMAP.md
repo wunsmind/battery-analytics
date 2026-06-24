@@ -103,8 +103,18 @@ The realism layer. Parameterized so any pack (CATL LFP today, anything later) is
   dominates the dispatch decision more than degradation) → in `BatteryAsset`.
 - 🚧 **Degradation cost model**, staged:
   1. Throughput marginal cost (`€/kWh = pack_cost / lifetime_throughput`) — ✅ done
-     (`optimizer/degradation.py`); rainflow/semi-empirical are stubs
-  2. Rainflow cycle counting + DoD curve (value irregular cycling)
+     (`optimizer/degradation.py`); semi-empirical is a stub
+  2. ✅ **Rainflow cycle counting + DoD curve** (`optimizer/rainflow.py`,
+     `RainflowDegradationModel`): ASTM E1049 counting of a realized SoC path into
+     swings, each priced against a log-log DoD–cycle-life curve
+     (`DoDCycleLifeCurve`, illustrative LFP). The LP still optimizes against the
+     linear marginal (pinned to the full-DoD anchor, so the two models agree on a
+     full-cycle diet); rainflow **re-prices the realized trajectory at settlement**
+     — the same forecast-then-settle split used elsewhere. On the illustrative LFP
+     curve, five shallow DoD-0.2 cycles cost ~50% of the flat throughput rate while
+     deep full cycles stay at 100% — *valuing irregular cycling*, the point of the
+     stage. **Datasheet-agnostic:** real CATL cycle-life-vs-DoD numbers drop into
+     `DoDCycleLifeCurve` as config. ⏳ *Calibration still gated on the datasheet.*
   3. Semi-empirical: `loss = f_cal(t,T,SoC) + f_cyc(throughput,DoD,C-rate,T)`
 - ⬜ **Warranty limits as optimizer constraints** (CATL warranties are throughput/
   cycle-bound — staying inside them is a hard limit, not just a cost)

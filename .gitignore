@@ -8,6 +8,9 @@
 *.db-shm
 !prices.db
 
+# generated figures (regenerate with plot_degradation.py)
+figures/
+
 # python
 __pycache__/
 *.pyc

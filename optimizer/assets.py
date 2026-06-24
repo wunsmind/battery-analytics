@@ -10,7 +10,12 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .degradation import DegradationModel, ThroughputDegradationModel
+from .degradation import (
+    DegradationModel,
+    DoDCycleLifeCurve,
+    RainflowDegradationModel,
+    ThroughputDegradationModel,
+)
 
 
 def _default_degradation() -> DegradationModel:
@@ -88,6 +93,36 @@ class BatteryAsset:
             degradation=ThroughputDegradationModel(
                 pack_cost=marginal_per_mwh * lifetime_throughput,
                 lifetime_throughput_mwh=lifetime_throughput,
+            ),
+            warranty_throughput_mwh=lifetime_throughput,
+            currency=currency.upper(),
+        )
+
+    @classmethod
+    def example_catl_lfp_rainflow(cls, currency: str = "EUR") -> "BatteryAsset":
+        """`example_catl_lfp` but with a DoD-aware rainflow degradation model.
+
+        Same pack economics (NUMBERS ARE ILLUSTRATIVE) — the 100%-DoD anchor of
+        the cycle-life curve matches the 6,000-cycle throughput assumption, so the
+        LP-facing marginal cost is identical. The two assets diverge only when the
+        realized SoC path is re-priced: rainflow charges less for shallow/irregular
+        cycling and more for deep cycling than the flat throughput rate.
+        """
+        usable = 2.0 * (1.0 - 0.05)
+        cycle_life = 6_000
+        lifetime_throughput = usable * cycle_life
+        marginal_per_mwh = {"EUR": 18.0, "SEK": 200.0}.get(currency.upper(), 18.0)
+        return cls(
+            name=f"CATL LFP 1MW/2MWh rainflow (illustrative, {currency.upper()})",
+            energy_capacity_mwh=2.0,
+            power_max_mw=1.0,
+            round_trip_efficiency=0.92,
+            soc_min_frac=0.05,
+            soc_max_frac=1.0,
+            degradation=RainflowDegradationModel(
+                pack_cost=marginal_per_mwh * lifetime_throughput,
+                usable_capacity_mwh=usable,
+                curve=DoDCycleLifeCurve.illustrative_lfp(),
             ),
             warranty_throughput_mwh=lifetime_throughput,
             currency=currency.upper(),
