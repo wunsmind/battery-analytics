@@ -14,6 +14,8 @@ joins PICASSO) are added by registering a Product and supplying its price series
 from .assets import BatteryAsset
 from .degradation import (
     DegradationModel,
+    DoDCycleLifeCurve,
+    RainflowDegradationModel,
     ThroughputDegradationModel,
 )
 from .dispatch import (
@@ -35,6 +37,8 @@ from .milp import MILPDispatchOptimizer
 __all__ = [
     "BatteryAsset",
     "DegradationModel",
+    "DoDCycleLifeCurve",
+    "RainflowDegradationModel",
     "ThroughputDegradationModel",
     "Direction",
     "MarketData",
