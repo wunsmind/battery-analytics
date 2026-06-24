@@ -90,6 +90,30 @@ CREATE TABLE IF NOT EXISTS zone_forecasts (
 """
 
 
+# Ancillary-service (reserve) market results from Svenska kraftnät (Mimer). Long/
+# narrow and product-keyed so it lines up 1:1 with optimizer.markets product ids
+# (fcr_n, fcr_d_up, ...). FCR clears a single Nordic marginal price (EUR/MW/h) that
+# is identical across SE1-SE4/DK2 — only the *procured volume* differs by zone — so
+# `price` repeats per zone while `volume_mw` is that zone's cleared MW. `price_type`
+# separates capacity (EUR/MW/h) from activation (EUR/MWh) so aFRR/mFRR energy slots
+# in without a schema change. Internal market data (see data-licensing memory).
+RESERVE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS reserve_prices (
+    product_id  TEXT NOT NULL,          -- optimizer.markets id: fcr_n, fcr_d_up, ...
+    zone        TEXT NOT NULL,          -- bidding zone: SE_1..SE_4, DK_2
+    starts_at   TEXT NOT NULL,          -- ISO-8601 with tz offset
+    resolution  TEXT NOT NULL,          -- HOURLY | QUARTER_HOURLY
+    price_type  TEXT NOT NULL,          -- capacity | activation
+    price       REAL,                   -- capacity: currency/MW/h ; activation: currency/MWh
+    volume_mw   REAL,                   -- cleared/procured volume in this zone (nullable)
+    currency    TEXT,                   -- e.g. EUR
+    source      TEXT,                   -- e.g. svk_mimer
+    fetched_at  TEXT NOT NULL,
+    PRIMARY KEY (product_id, zone, starts_at, price_type)
+);
+"""
+
+
 def _ensure_weather_columns(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(weather)")}
     for name in _WEATHER_ADDED:
@@ -123,6 +147,7 @@ def connect(db_path: str):
         conn.executescript(ZONE_SCHEMA)
         conn.executescript(WEATHER_SCHEMA)
         conn.executescript(FORECAST_SCHEMA)
+        conn.executescript(RESERVE_SCHEMA)
         _ensure_weather_columns(conn)
         _migrate_legacy(conn)
         yield conn
@@ -333,6 +358,72 @@ def list_forecast_kinds(db_path: str) -> list[str]:
     with connect(db_path) as conn:
         rows = conn.execute(
             "SELECT DISTINCT kind FROM zone_forecasts ORDER BY kind"
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+# ---- reserve prices (Svenska kraftnät / Mimer) -----------------------------
+
+def upsert_reserve_prices(db_path: str, rows: Iterable[dict]) -> int:
+    """Insert/update reserve market results. Rows are dicts with keys:
+    product_id, zone, starts_at, resolution, price_type, price, volume_mw,
+    currency, source."""
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    records = [
+        (r["product_id"], r["zone"], r["starts_at"], r["resolution"],
+         r.get("price_type", "capacity"), r.get("price"), r.get("volume_mw"),
+         r.get("currency"), r.get("source"), fetched_at)
+        for r in rows
+    ]
+    if not records:
+        return 0
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO reserve_prices
+                (product_id, zone, starts_at, resolution, price_type, price,
+                 volume_mw, currency, source, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(product_id, zone, starts_at, price_type) DO UPDATE SET
+                resolution=excluded.resolution,
+                price=excluded.price,
+                volume_mw=excluded.volume_mw,
+                currency=excluded.currency,
+                source=excluded.source,
+                fetched_at=excluded.fetched_at;
+            """,
+            records,
+        )
+    return len(records)
+
+
+def load_reserve_prices(
+    db_path: str,
+    zone: str | None = None,
+    product_id: str | None = None,
+    price_type: str | None = None,
+) -> pd.DataFrame:
+    """Load reserve market rows (long format), parsed and sorted by time."""
+    clauses, params = [], []
+    for col, val in (("zone", zone), ("product_id", product_id),
+                     ("price_type", price_type)):
+        if val:
+            clauses.append(f"{col} = ?")
+            params.append(val)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    with connect(db_path) as conn:
+        df = pd.read_sql_query("SELECT * FROM reserve_prices" + where, conn,
+                               params=tuple(params))
+    if not df.empty:
+        df["starts_at"] = pd.to_datetime(df["starts_at"], utc=True, format="ISO8601")
+        df = df.sort_values("starts_at").reset_index(drop=True)
+    return df
+
+
+def list_reserve_products(db_path: str) -> list[str]:
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT product_id FROM reserve_prices ORDER BY product_id"
         ).fetchall()
     return [r[0] for r in rows]
 

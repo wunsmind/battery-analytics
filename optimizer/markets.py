@@ -154,6 +154,37 @@ class MarketData:
             currency=currency,
         )
 
+    def attach_reserves(
+        self,
+        db_path: str,
+        zone: str,
+        products: list[str] | None = None,
+    ) -> "MarketData":
+        """Fold Mimer reserve prices for `zone` into capacity_prices / activation_prices.
+
+        Reserve capacity clears EUR/MW/h (hourly); spot may be 15-min — each price
+        is forward-filled onto `self.index` so a sub-hour spot interval inherits its
+        hour's capacity price. Returns self for chaining. Products supplied here are
+        exactly those `available_products()` will surface (subject to their global
+        `available` flag — e.g. aFRR stays off until PICASSO).
+        """
+        from store.db import load_reserve_prices  # local import to avoid cycles
+
+        df = load_reserve_prices(db_path, zone=zone)
+        if df.empty:
+            return self
+        if products is not None:
+            df = df[df["product_id"].isin(products)]
+
+        for (pid, ptype), grp in df.groupby(["product_id", "price_type"]):
+            series = (grp.set_index("starts_at")["price"].astype(float)
+                      .sort_index())
+            series = series[~series.index.duplicated(keep="last")]
+            series = series.reindex(self.index, method="ffill")
+            target = self.activation_prices if ptype == "activation" else self.capacity_prices
+            target[pid] = series
+        return self
+
     @classmethod
     def from_zone_prices(
         cls,
