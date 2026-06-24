@@ -19,6 +19,7 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, dcc, html
 from dotenv import load_dotenv
 
+from optimizer.assets import BatteryAsset
 from pricing import DEFAULT_SEK_PER_EUR, build_breakdown
 from store.db import (
     list_homes,
@@ -45,6 +46,23 @@ TIBBER_METRICS = {
 }
 
 app = Dash(__name__, title="Battery Analytics — Spot Prices")
+
+# Illustrative battery for the arbitrage break-even overlay (EUR/MWh zone view
+# only). NOT datasheet-verified — see optimizer/assets.py.
+BATTERY = BatteryAsset.example_catl_lfp("EUR")
+
+
+def _breakeven_spread(min_price: pd.Series) -> pd.Series:
+    """Spread a battery must clear to profit, charging at each day's min price.
+
+        break-even = price_low·(1/RTE − 1)  +  c_deg
+                     └─ efficiency loss ─┘     └ degradation €/MWh ┘
+
+    A day is worth cycling only when its max−min spread beats this.
+    """
+    rte = BATTERY.round_trip_efficiency
+    c_deg = BATTERY.degradation.marginal_cost_per_mwh()
+    return min_price * (1.0 / rte - 1.0) + c_deg
 
 
 def _daily_stats(df: pd.DataFrame, col: str) -> pd.DataFrame:
@@ -110,6 +128,12 @@ app.layout = html.Div(
         html.Div(id="kpis", style={"display": "flex", "gap": "24px", "margin": "20px 0"}),
         dcc.Graph(id="price-curve"),
         html.H3("Daily min / max spread (battery arbitrage potential)"),
+        html.P(
+            "Red dashed line (zone view): the spread a battery must clear to profit "
+            "— round-trip-efficiency loss + degradation cost. Bars above it are "
+            "worth cycling. Battery params illustrative, not datasheet-verified.",
+            style={"color": "#666", "fontSize": "13px", "marginTop": "0"},
+        ),
         dcc.Graph(id="spread-chart"),
         dcc.Interval(id="tick", interval=60_000, n_intervals=0),
     ],
@@ -239,6 +263,16 @@ def _update(source, series, metric, resolution, _n):
     spread = go.Figure()
     spread.add_bar(x=stats["day"], y=stats["spread"], name="spread (max-min)")
     spread.add_scatter(x=stats["day"], y=stats["mean"], name="daily mean", mode="lines+markers")
+
+    # Battery break-even overlay — only meaningful on the EUR/MWh wholesale view
+    # (Tibber consumer prices bundle tax + markup; a battery arbitrages wholesale).
+    profitable = None
+    if source == ZONE and not stats.empty:
+        breakeven = _breakeven_spread(stats["min"])
+        spread.add_scatter(x=stats["day"], y=breakeven, name="break-even (illustrative)",
+                           mode="lines", line=dict(color="#d62728", dash="dash"))
+        profitable = int((stats["spread"] > breakeven).sum())
+
     spread.update_layout(title=f"Daily spread & mean ({unit})", barmode="overlay",
                          margin=dict(t=50, b=20))
 
@@ -250,6 +284,14 @@ def _update(source, series, metric, resolution, _n):
         _kpi_card("Latest max", fmt.format(latest["max"])),
         _kpi_card("Latest min", fmt.format(latest["min"])),
     ]
+    if profitable is not None:
+        c_deg = BATTERY.degradation.marginal_cost_per_mwh()
+        kpis.append(_kpi_card(
+            "Profitable cycle-days",
+            f"{profitable}/{stats.shape[0]}",
+            "#0a7d33",
+        ))
+        kpis.append(_kpi_card("Degradation floor", f"{c_deg:.0f} EUR/MWh", "#d62728"))
     return curve, spread, kpis
 
 
