@@ -157,7 +157,9 @@ def _localize_stockholm(naive: pd.Series) -> pd.DatetimeIndex:
     try:
         return idx.tz_localize(MIMER_TZ, ambiguous="infer",
                                nonexistent="shift_forward")
-    except (pd.errors.AmbiguousTimeError, pd.errors.NonExistentTimeError):
+    except ValueError:
+        # DST fold that 'infer' can't resolve (e.g. a non-contiguous window) —
+        # fall back to treating the ambiguous hour as DST (ambiguous=True).
         return idx.tz_localize(MIMER_TZ, ambiguous=True,
                                nonexistent="shift_forward")
 
