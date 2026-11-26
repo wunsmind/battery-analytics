@@ -116,7 +116,7 @@ def rolling_horizon_dispatch(
         fc = recursive_forecast(model, hist, horizon, commit_steps, weather, exog)
         fc = fc.reindex(horizon).ffill().bfill()  # guard rare unfilled tails
 
-        c, d, soc_after, _ = _solve_window(
+        c, d, soc_after, *_ = _solve_window(
             fc.to_numpy(dtype=float).tolist(), dt,
             asset.charge_power_mw, asset.discharge_power_mw,
             eff, soc_lo, soc_hi, soc, c_deg,

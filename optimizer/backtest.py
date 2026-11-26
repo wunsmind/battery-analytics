@@ -44,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--start")
     p.add_argument("--end")
     p.add_argument("--window-days", type=float, default=30.0)
+    p.add_argument("--stack", action="store_true",
+                   help="Also run spot + FCR capacity stacking and report the uplift")
     args = p.parse_args(argv if argv is not None else sys.argv[1:])
 
     load_dotenv()
@@ -82,7 +84,41 @@ def main(argv: list[str] | None = None) -> int:
           f"{milp.revenue.net*365/days:>16,.0f}  {data.currency}/MW/yr")
     uplift = (milp.revenue.net / base.revenue.net - 1) * 100 if base.revenue.net > 0 else float("nan")
     print(f"\nLP uplift over baseline: {uplift:.0f}%")
+
+    if args.stack:
+        _print_stacking(args, zone_db, asset, data, milp, days)
     return 0
+
+
+def _print_stacking(args, zone_db, asset, data, milp_spot, days):
+    """Run the LP again with FCR capacity attached and report spot+FCR uplift."""
+    stack_data = MarketData(index=data.index, resolution_minutes=data.resolution_minutes,
+                            spot_price=data.spot_price, currency=data.currency)
+    stack_data.attach_reserves(zone_db, zone=args.zone)
+    products = [p.id for p in stack_data.available_products() if p.id != "spot"]
+    if not products:
+        print(f"\n[stack] No FCR price data for {args.zone} — run fetch_reserve.py first.")
+        return
+    milp_stack = MILPDispatchOptimizer(window_days=args.window_days).optimize(asset, stack_data)
+
+    cur, ann = data.currency, 365 / days
+    print(f"\n=== Spot vs Spot+FCR (LP, perfect foresight) — products: {', '.join(products)} ===")
+    print(f"{'':20}{'spot-only':>14}{'spot+FCR':>16}")
+    print(f"{'arbitrage':20}{milp_spot.revenue.arbitrage:>14,.0f}"
+          f"{milp_stack.revenue.arbitrage:>16,.0f}  {cur}")
+    for pid, v in milp_stack.revenue.capacity.items():
+        print(f"{'capacity['+pid+']':20}{0:>14,.0f}{v:>16,.0f}  {cur}")
+    print(f"{'degradation':20}{milp_spot.revenue.degradation_cost:>14,.0f}"
+          f"{milp_stack.revenue.degradation_cost:>16,.0f}  {cur}")
+    print(f"{'net':20}{milp_spot.revenue.net:>14,.0f}{milp_stack.revenue.net:>16,.0f}  {cur}")
+    print(f"{'net /MW/yr':20}{milp_spot.revenue.net*ann:>14,.0f}"
+          f"{milp_stack.revenue.net*ann:>16,.0f}  {cur}/MW/yr")
+    print(f"{'cycles':20}{milp_spot.equivalent_full_cycles:>14,.1f}"
+          f"{milp_stack.equivalent_full_cycles:>16,.1f}")
+    if milp_spot.revenue.net > 0:
+        up = (milp_stack.revenue.net / milp_spot.revenue.net - 1) * 100
+        print(f"\nFCR stacking uplift over spot-only: {up:.0f}%")
+    return
 
 
 if __name__ == "__main__":

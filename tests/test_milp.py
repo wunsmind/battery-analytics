@@ -59,6 +59,50 @@ def test_power_cap_respected():
     assert res.schedule.discharge_mw.max() <= asset.discharge_power_mw + 1e-6
 
 
+def test_commits_fcr_capacity_when_paid():
+    # Flat spot -> no arbitrage; a paid FCR-N price should pull out capacity.
+    idx = pd.date_range("2026-01-01", periods=24, freq="h", tz="UTC")
+    md = MarketData(index=idx, resolution_minutes=60,
+                    spot_price=pd.Series(50.0, index=idx), currency="EUR")
+    md.capacity_prices["fcr_n"] = pd.Series(20.0, index=idx)   # 20 EUR/MW/h
+    res = MILPDispatchOptimizer(window_days=1).optimize(_asset(), md)
+    assert res.revenue.capacity.get("fcr_n", 0.0) > 0
+    alloc = res.schedule.reserve_allocation["fcr_n"]
+    # FCR-N is symmetric with 60-min endurance on a 1 MW / 2 MWh asset: the
+    # both-sided energy reservation caps a single product's commit below 1 MW.
+    assert 0.0 < alloc.max() <= 1.0 + 1e-6
+
+
+def test_energy_reservation_caps_commitment():
+    # FCR-D up endurance is 20 min (1/3 h), so committed MW <= usable_energy / (1/3).
+    # A 1 MW / 0.2 MWh-usable asset is energy-bound at 0.6 MW, below the 1 MW power cap.
+    idx = pd.date_range("2026-01-01", periods=12, freq="h", tz="UTC")
+    md = MarketData(index=idx, resolution_minutes=60,
+                    spot_price=pd.Series(50.0, index=idx), currency="EUR")
+    md.capacity_prices["fcr_d_up"] = pd.Series(100.0, index=idx)  # up-only, big price
+    small = BatteryAsset(name="small", energy_capacity_mwh=0.2, power_max_mw=1.0,
+                         round_trip_efficiency=0.9, soc_min_frac=0.0, soc_max_frac=1.0,
+                         currency="EUR",
+                         degradation=ThroughputDegradationModel(
+                             pack_cost=500.0, lifetime_throughput_mwh=100.0))
+    res = MILPDispatchOptimizer(window_days=1).optimize(small, md)
+    commit = res.schedule.reserve_allocation["fcr_d_up"].max()
+    assert commit <= 0.6 + 1e-6        # energy-bound...
+    assert commit > 0.5                # ...and binding below the 1 MW power cap
+
+
+def test_stacking_never_worse_than_spot_only():
+    asset = _asset()
+    base = _data()                                   # spot only
+    stack = _data()
+    stack.capacity_prices["fcr_d_up"] = pd.Series(8.0, index=stack.index)
+    r_base = MILPDispatchOptimizer(window_days=2).optimize(asset, base)
+    r_stack = MILPDispatchOptimizer(window_days=2).optimize(asset, stack)
+    # Capacity is an extra revenue option; the LP can always decline it.
+    assert r_stack.revenue.net >= r_base.revenue.net - 1e-6
+    assert sum(r_stack.revenue.capacity.values()) > 0
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:
