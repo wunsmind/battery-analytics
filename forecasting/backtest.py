@@ -54,7 +54,7 @@ def forecast_driven_dispatch(
 
     for i in range(0, len(fvals), steps):
         fw = fvals[i:i + steps].tolist()
-        c, d, soc_after, _ = _solve_window(
+        c, d, soc_after, *_ = _solve_window(
             fw, dt, asset.charge_power_mw, asset.discharge_power_mw,
             eff, soc_lo, soc_hi, soc, c_deg,
         )
