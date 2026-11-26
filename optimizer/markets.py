@@ -91,6 +91,9 @@ NORDIC_PRODUCTS: dict[str, Product] = {
 }
 
 
+_RESOLUTION_MINUTES = {"HOURLY": 60, "QUARTER_HOURLY": 15}
+
+
 @dataclass
 class MarketData:
     """Time-aligned price inputs for the optimization horizon.
@@ -164,9 +167,12 @@ class MarketData:
 
         Reserve capacity clears EUR/MW/h (hourly); spot may be 15-min — each price
         is forward-filled onto `self.index` so a sub-hour spot interval inherits its
-        hour's capacity price. Returns self for chaining. Products supplied here are
-        exactly those `available_products()` will surface (subject to their global
-        `available` flag — e.g. aFRR stays off until PICASSO).
+        hour's capacity price, but *only within that price's own market time unit*.
+        Steps with no published price (gaps, or past the end of the reserve data)
+        stay NaN, which the optimizer treats as "cannot commit" — a stale last price
+        is never carried forward. Returns self for chaining. Products supplied here
+        are exactly those `available_products()` will surface (subject to their
+        global `available` flag — e.g. aFRR stays off until PICASSO).
         """
         from store.db import load_reserve_prices  # local import to avoid cycles
 
@@ -180,7 +186,12 @@ class MarketData:
             series = (grp.set_index("starts_at")["price"].astype(float)
                       .sort_index())
             series = series[~series.index.duplicated(keep="last")]
-            series = series.reindex(self.index, method="ffill")
+            mtu = pd.Timedelta(minutes=_RESOLUTION_MINUTES.get(
+                str(grp["resolution"].mode().iat[0]).upper(), 60))
+            # Fill forward strictly inside the MTU: a 15-min step at :45 inherits
+            # its hour's price; the next hour (or anything past the data) does not.
+            series = series.reindex(self.index, method="ffill",
+                                    tolerance=mtu - pd.Timedelta(seconds=1))
             target = self.activation_prices if ptype == "activation" else self.capacity_prices
             target[pid] = series
         return self

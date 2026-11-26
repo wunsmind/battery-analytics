@@ -61,6 +61,10 @@ class _Reserve:
     endurance_h: float            # sustain requirement -> energy reserved per MW
     act_frac: float               # E[activated energy]/committed MW (wear proxy)
     prices: tuple[float, ...]     # capacity price (cur/MW/h) per step; NaN = unavailable
+    # Per-step market-time-unit id (e.g. the hour a 15-min step belongs to). Steps
+    # sharing an id must carry the same commitment — an hourly FCR bid can't
+    # change mid-hour. None = every step is its own MTU.
+    blocks: tuple[int, ...] | None = None
 
     @staticmethod
     def committable(price: float) -> bool:
@@ -102,6 +106,13 @@ def _solve_window(
                for t in range(n)]
         for k in reserves
     }
+    # Block commitments: one bid per product MTU (hourly FCR over 15-min steps).
+    for k in reserves:
+        if k.blocks is None:
+            continue
+        for t in range(1, n):
+            if k.blocks[t] == k.blocks[t - 1]:
+                prob += r[k.id][t] == r[k.id][t - 1]
 
     prob += soc[0] == soc_start
     for t in range(n):
@@ -199,12 +210,26 @@ def _capacity_reserves(data: MarketData) -> list:
             if p.mechanism is Mechanism.CAPACITY_RESERVE and p.id in data.capacity_prices]
 
 
-def _slice_reserves(products: list, data: MarketData, lo: int, hi: int) -> list[_Reserve]:
+def _reserve_blocks(products: list, data: MarketData) -> dict[str, "pd.Index"]:
+    """Per-step MTU id for each product: the step's timestamp floored to the
+    product's market time unit (as int ns). Coarser-than-spot products get blocks;
+    a product at or finer than the spot resolution maps every step to itself."""
+    out = {}
+    for p in products:
+        mtu = max(int(p.resolution_minutes), data.resolution_minutes)
+        out[p.id] = data.index.floor(f"{mtu}min").asi8
+    return out
+
+
+def _slice_reserves(products: list, data: MarketData, lo: int, hi: int,
+                    blocks: dict | None = None) -> list[_Reserve]:
     """Resolve each reserve product onto the window [lo, hi) as a `_Reserve`."""
     out = []
     for p in products:
         vals = data.capacity_prices[p.id].to_numpy(dtype=float)[lo:hi]
+        blk = tuple(int(b) for b in blocks[p.id][lo:hi]) if blocks else None
         out.append(_Reserve(
+            blocks=blk,
             id=p.id,
             up=p.direction in (Direction.UP, Direction.SYMMETRIC),
             down=p.direction in (Direction.DOWN, Direction.SYMMETRIC),
@@ -255,10 +280,20 @@ class MILPDispatchOptimizer(DispatchOptimizer):
         reserve_alloc: dict[str, list[float]] = {p.id: [] for p in reserve_products}
         reserve_throughput = 0.0
 
+        blocks = _reserve_blocks(reserve_products, data)
+
         vals = prices.to_numpy(dtype=float)
-        for i in range(0, len(vals), steps_per_window):
-            window = vals[i:i + steps_per_window].tolist()
-            reserves = _slice_reserves(reserve_products, data, i, i + len(window))
+        n_total = len(vals)
+        i = 0
+        while i < n_total:
+            j = min(i + steps_per_window, n_total)
+            # Never split a reserve MTU across windows (its block-equal commitment
+            # would be unenforceable): extend the window to the MTU boundary.
+            while j < n_total and any(b[j] == b[j - 1] for b in blocks.values()):
+                j += 1
+            window = vals[i:j].tolist()
+            reserves = _slice_reserves(reserve_products, data, i, j, blocks)
+            i = j
             c, d, soc_after, arb, alloc, cap, r_act = _solve_window(
                 window, dt, asset.charge_power_mw, asset.discharge_power_mw,
                 eff, soc_lo, soc_hi, soc_start, c_deg, reserves,

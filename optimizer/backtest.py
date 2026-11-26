@@ -99,6 +99,15 @@ def _print_stacking(args, zone_db, asset, data, milp_spot, days):
     if not products:
         print(f"\n[stack] No FCR price data for {args.zone} — run fetch_reserve.py first.")
         return
+    # Steps without a published reserve price can't be committed (no stale fill),
+    # so partial coverage silently deflates FCR revenue — surface it.
+    for pid in products:
+        s = stack_data.capacity_prices[pid]
+        cov = s.notna().mean()
+        if cov < 0.99:
+            last = s.last_valid_index()
+            print(f"[stack] WARNING: {pid} prices cover {cov:.0%} of the window "
+                  f"(last price {last}) — run fetch_reserve.py to refresh market.db.")
     milp_stack = MILPDispatchOptimizer(window_days=args.window_days).optimize(asset, stack_data)
 
     cur, ann = data.currency, 365 / days

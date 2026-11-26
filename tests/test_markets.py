@@ -91,8 +91,26 @@ def test_attach_reserves_lights_up_products():
         md.attach_reserves(db, zone="SE_3")
 
     assert "fcr_n" in md.capacity_prices
-    # Hourly capacity price forward-filled across the horizon.
-    assert md.capacity_prices["fcr_n"].notna().any()
+    # Fixture holds one hour (2026-06-20 00:00 Stockholm = 22:00 UTC): that step
+    # gets the price; later hours have no published price and must stay NaN —
+    # the last price is NOT carried forward past the data.
+    fcr_n = md.capacity_prices["fcr_n"]
+    assert fcr_n.iloc[0] == 18.04
+    assert fcr_n.iloc[1:].isna().all()
     after = {p.id for p in md.available_products()}
     assert {"fcr_n", "fcr_d_up", "fcr_d_down"} <= after
     assert "afrr_up" not in after          # globally available=False until PICASSO
+
+
+def test_attach_reserves_fills_quarter_hours_within_hour_only():
+    # 15-min spot over 2 h; reserve price exists for the first hour only.
+    idx = pd.date_range("2026-06-19 22:00", periods=8, freq="15min", tz="UTC")
+    md = MarketData(index=idx, resolution_minutes=15,
+                    spot_price=pd.Series(50.0, index=idx), currency="EUR")
+    with tempfile.TemporaryDirectory() as d:
+        db = str(Path(d) / "t.db")
+        upsert_reserve_prices(db, parse_fcr_csv(FIXTURE_CSV))
+        md.attach_reserves(db, zone="SE_3")
+    fcr_n = md.capacity_prices["fcr_n"]
+    assert (fcr_n.iloc[:4] == 18.04).all()     # all four quarters of the hour
+    assert fcr_n.iloc[4:].isna().all()         # next hour: no price, no fill

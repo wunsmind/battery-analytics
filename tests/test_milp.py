@@ -69,7 +69,7 @@ def test_commits_fcr_capacity_when_paid():
     assert res.revenue.capacity.get("fcr_n", 0.0) > 0
     alloc = res.schedule.reserve_allocation["fcr_n"]
     # FCR-N is symmetric with 60-min endurance on a 1 MW / 2 MWh asset: the
-    # both-sided energy reservation caps a single product's commit below 1 MW.
+    # both-sided reservation caps commit at min(soc, cap - soc)/1h = 1 MW at mid-SoC.
     assert 0.0 < alloc.max() <= 1.0 + 1e-6
 
 
@@ -101,6 +101,41 @@ def test_stacking_never_worse_than_spot_only():
     # Capacity is an extra revenue option; the LP can always decline it.
     assert r_stack.revenue.net >= r_base.revenue.net - 1e-6
     assert sum(r_stack.revenue.capacity.values()) > 0
+
+
+def _qh_reserve_data(start: str, hours: int) -> MarketData:
+    # 15-min spot with a spike in the last quarter of every hour + an hourly FCR-N
+    # price. Unconstrained, the LP sells FCR for three quarters and dumps power
+    # into the spike (commit swings 0<->1 MW mid-hour — an unbiddable schedule);
+    # block-constrained it holds ~1 MW of FCR for the whole hour.
+    idx = pd.date_range(start, periods=hours * 4, freq="15min", tz="UTC")
+    spot = pd.Series([150.0 if i % 4 == 3 else 40.0 for i in range(len(idx))], index=idx)
+    md = MarketData(index=idx, resolution_minutes=15, spot_price=spot, currency="EUR")
+    md.capacity_prices["fcr_n"] = pd.Series(40.0, index=idx)
+    return md
+
+
+def _assert_constant_within_hours(alloc: pd.Series) -> None:
+    g = alloc.groupby(alloc.index.floor("h"))
+    spread = g.max() - g.min()
+    assert spread.max() <= 1e-6, f"commit changes mid-hour: {spread[spread > 1e-6]}"
+
+
+def test_hourly_reserve_commit_is_block_constant_on_15min_steps():
+    md = _qh_reserve_data("2026-01-01", hours=24)
+    res = MILPDispatchOptimizer(window_days=1).optimize(_asset(), md)
+    alloc = res.schedule.reserve_allocation["fcr_n"]
+    assert alloc.max() > 0                      # still sells FCR...
+    _assert_constant_within_hours(alloc)        # ...but one bid per hour
+
+
+def test_window_boundary_never_splits_an_hour():
+    # Start mid-hour and use a window that isn't a whole number of hours, so a
+    # naive chunker would cut an MTU in two.
+    md = _qh_reserve_data("2026-01-01 00:15", hours=12)
+    res = MILPDispatchOptimizer(window_days=0.1).optimize(_asset(), md)  # 9.6 steps
+    _assert_constant_within_hours(res.schedule.reserve_allocation["fcr_n"])
+    assert len(res.schedule.charge_mw) == len(md.index)
 
 
 def _run_all():
